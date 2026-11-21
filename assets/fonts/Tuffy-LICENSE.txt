@@ -1,0 +1,17 @@
+Tuffy 1.1 - Public Domain
+
+Author: Thatcher Ulrich
+Original author and licensing statement: https://tulrich.com/fonts/
+
+The following notice is embedded in the bundled Tuffy.ttf:
+
+Created by Thatcher Ulrich (http://tulrich.com) with FontForge 1.0 (http://fontforge.sf.net)
+
+This font, including hint instructions, has been donated to the Public Domain.  Do whatever you want with it.
+
+The original author's public-domain release also states:
+
+I, the copyright holder of this work, hereby release it into the public domain. This applies worldwide.
+
+In case this is not legally possible,
+I grant any entity the right to use this work for any purpose, without any conditions, unless such conditions are required by law.
