@@ -2,6 +2,13 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-22 - Painted grass with left clicks
+
+- The game starts with grass in the center cell. Left-clicking inside the grid adds a grass cell for the current run. Left clicks outside the grid log map coordinates and leave the grass list alone.
+- Each frame reuses one grass sprite to draw every stored cell and draws the hover outline separately.
+- The manual click-to-paint test succeeded. An isolated MinGW build compiled and linked successfully.
+- The next step is keeping one grass entry when a cell is clicked repeatedly.
+
 ## 2026-11-22 - Drew the first grass tile and logged map clicks
 
 - Draws one 32 x 32 grass tile near the center of the map. The hovered cell uses a transparent outline from Kenney's CC0 UI Pack - Pixel Adventure, drawn above the grid. The pack and its license are included in `assets/ui/`.

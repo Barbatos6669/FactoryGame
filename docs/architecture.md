@@ -1,6 +1,6 @@
 # Current architecture
 
-Beltbound is a small C++17/SFML 3 learning project. The grid is square: one size controls both axes. `main()` calls `grid.setGridSize(100)`; its 100 cells per side and 32 pixels per cell produce a 3200 x 3200 pixel grid. The class default remains 8 cells per side. Tile occupancy and placement are not implemented yet.
+Beltbound is a small C++17/SFML 3 learning project. The grid is square: one size controls both axes. `main()` calls `grid.setGridSize(100)`; its 100 cells per side and 32 pixels per cell produce a 3200 x 3200 pixel grid. The class default remains 8 cells per side. Grass painting uses a list of cell indices kept for the current run.
 
 ## File roles
 
@@ -15,7 +15,7 @@ Beltbound is a small C++17/SFML 3 learning project. The grid is square: one size
 
 ## Startup and each frame
 
-`main()` owns the window, configured `Grid`, `Debug`, and the grass and hover sprites. It sets up the window, loads the font and textures, and passes the sprites to `runGame()`. `runGame()` owns the persistent view and frame clock for the duration of the loop.
+`main()` owns the window, configured `Grid`, `Debug`, and the grass and hover sprites. It sets up the window, loads the font and textures, and passes the sprites to `runGame()`. `runGame()` owns the persistent view, frame clock, and grass cell list. It seeds the list once with the center cell.
 
 The grid stays at the world origin. A persistent game view starts centered on the grid's midpoint and moves with WASD. Resizing changes that view's size to the window's pixel dimensions while preserving its bounded camera center, so cells stay square and one game unit stays one pixel.
 
@@ -26,15 +26,15 @@ After movement, each camera-center coordinate is clamped to the inclusive range 
 After measuring frame time, `runGame()` follows this order, stopping after event handling if the window closed:
 
 ```cpp
-const bool focusChanged = handleEvents(window, view, debug);
+const bool focusChanged = handleEvents(window, view, debug, grid, grassCells);
 updateCamera(window, view, grid, deltaSeconds, focusChanged);
 const auto mousePixels = sf::Mouse::getPosition(window);
 const auto mouseWorld = window.mapPixelToCoords(mousePixels);
 debug.update(deltaSeconds, mousePixels, mouseWorld, grid);
-drawFrame(window, grid, debug, mouseWorld, grass, outline);
+drawFrame(window, grid, debug, mouseWorld, grass, outline, grassCells);
 ```
 
-`handleEvents()` handles close, focus, F3, resize, and left-clicks. It maps click pixels through the active view and logs map coordinates. `updateCamera()` applies the focused WASD movement and bounds described above. `drawFrame()` clears the window, draws the grass sprite, draws the grid when enabled, then draws the transparent hover outline and debug overlay before presenting the frame. `drawHover()` uses `Grid`'s shared lookup to position the outline.
+`handleEvents()` handles close, focus, F3, resize, and left-clicks. It maps each left click through the active view and logs the map coordinates. If the position is inside the grid, it appends the cell indices to the grass list and logs them. `updateCamera()` applies the focused WASD movement and bounds described above. `drawFrame()` clears the window, repositions and draws the grass sprite for each stored cell, draws the grid when enabled, then draws the transparent hover outline and debug overlay before presenting the frame. `drawHover()` uses `Grid`'s shared lookup to position the outline.
 
 `Grid::draw()` keeps the green `RectangleShape` frame and uses full-length horizontal and vertical `RectangleShape` lines. One loop runs `size` times, drawing two lines per index. This gives `2 * size + 1` top-level `target.draw()` calls per grid frame: 201 at the current size of 100. Drawing work grows linearly with cells per side.
 
@@ -46,4 +46,4 @@ The grid and debug overlay start visible. F3 toggles both once per keypress. FPS
 
 `Debug::draw()` temporarily uses a pixel-based screen view to keep the panel at the top-right, then restores the previous game view. If the font failed to load, drawing the overlay is skipped and the game continues. `loadFont()` reports the failure once through `log()`.
 
-`setConsoleEnabled(false)` silences `Debug::log()` without hiding the overlay. Startup messages, visibility changes, and left-click map coordinates use `log()`.
+`setConsoleEnabled(false)` silences `Debug::log()` without hiding the overlay. Startup messages, visibility changes, left-click map coordinates, and valid clicked-cell indices use `log()`.

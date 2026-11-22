@@ -5,11 +5,11 @@ Beltbound is an original top-down factory game about gathering resources and bui
 ## Current prototype
 
 - **W/A/S/D** pans a camera bounded to the map.
-- The prototype draws one grass tile near the center of the grid. A transparent Kenney outline marks the hovered cell.
+- The prototype starts with one grass tile near the center of the grid. A transparent Kenney outline marks the hovered cell.
 - **F3** toggles the 100 × 100 grid and debug overlay together.
-- **Left-click** logs the mouse position in map coordinates using the active camera.
+- **Left-click** paints grass in the cell under the mouse. Painted cells remain for the current run.
 
-Next, convert a click to a grid row and column and move the grass tile to that cell.
+Next, keep one grass entry per cell when it is clicked repeatedly.
 
 ![Eight original Tier 1 resource sprites](assets/tilesets/beltbound-resources-tier-1.png)
 
