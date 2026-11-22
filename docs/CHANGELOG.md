@@ -2,6 +2,15 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-21 - Added incremental builds and terrain setup
+
+- Ctrl+Shift+B and F5 use the incremental MinGW build. The separate **Rebuild Beltbound (Full)** task recompiles and relinks everything.
+- F3 toggles the debug overlay and grid together.
+- Beltbound loads the local terrain sheet from beside the executable at startup. It logs a failure and exits with status 1 if the PNG is missing or unreadable.
+- Added the original Tier 1 resource atlas with 32 x 32 sprite cells and recorded asset credits. The licensed terrain sheets stay local.
+- An isolated full build passed. A repeat build with no changes skipped compilation and linking. Changing `Debug.hpp` rebuilt only `main.cpp` and `Debug.cpp` before relinking.
+- The next milestone is drawing one grass tile from the loaded terrain sheet.
+
 ## 2026-11-21 - Documented class APIs and frame helpers
 
 - Added concise Doxygen comments to Grid and Debug header declarations and the ordinary functions in `main.cpp`, covering units, coordinate spaces, lookup preconditions, focus/timing rules, ownership, and drawing order. Preserved the original author and copyright attribution.
