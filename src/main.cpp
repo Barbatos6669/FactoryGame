@@ -69,6 +69,15 @@ bool handleEvents(sf::RenderWindow& window, sf::View& view, Debug& debug)
                 window.setView(view);
             }
         }
+        if (const auto* click = event->getIf<sf::Event::MouseButtonPressed>())
+        {
+            if (click->button == sf::Mouse::Button::Left)
+            {
+                const auto clickWorld = window.mapPixelToCoords(click->position);
+                debug.log("Map click: " + std::to_string(clickWorld.x) +
+                            ", " + std::to_string(clickWorld.y));
+            }
+        }
     }
     return focusChanged;
 }
@@ -113,34 +122,39 @@ void updateCamera(sf::RenderWindow& window, sf::View& view, const Grid& grid,
  * @param target Draws using its active world view.
  * @param grid Supplies cell bounds and world-to-cell conversion.
  * @param mouseWorld Mouse position already mapped through the world view.
+ * @param outline Sprite for the outline tiles.
  */
-void drawHover(sf::RenderTarget& target, const Grid& grid, sf::Vector2f mouseWorld)
+void drawHover(sf::RenderTarget& target, const Grid& grid, sf::Vector2f mouseWorld, sf::Sprite& outline)
 {
     if (!grid.contains(mouseWorld))
         return;
 
     const auto cell = grid.worldToCell(mouseWorld);
-    const float cellPixels = static_cast<float>(grid.cellSize);
-    sf::RectangleShape highlight({cellPixels, cellPixels});
-    highlight.setPosition({static_cast<float>(cell.x * grid.cellSize),
-                           static_cast<float>(cell.y * grid.cellSize)});
-    highlight.setFillColor(sf::Color(60, 100, 160));
-    target.draw(highlight);
+    outline.setPosition({static_cast<float>(cell.x * grid.cellSize),
+                         static_cast<float>(cell.y * grid.cellSize)});
+    target.draw(outline);
 }
 
 /**
  * @brief Clear, draw hover then grid then Debug, and present the frame.
+ * @param window Draws to the window and presents it.
+ * @param grid Draws the grid if debug.isGridVisible() returns true.
  * @param mouseWorld World position used for hover; grid lines are drawn over its highlight.
+ * @param grass Sprite for the grass tiles.
  */
 void drawFrame(sf::RenderWindow& window, const Grid& grid, const Debug& debug,
-               sf::Vector2f mouseWorld)
+               sf::Vector2f mouseWorld, sf::Sprite& grass, sf::Sprite& outline)
 {
     window.clear();
-    drawHover(window, grid, mouseWorld);
+    window.draw(grass);
+
+
     if (debug.isGridVisible())
     {
         grid.draw(window);
     }
+
+    drawHover(window, grid, mouseWorld, outline);
     debug.draw(window);
     window.display();
 }
@@ -150,8 +164,10 @@ void drawFrame(sf::RenderWindow& window, const Grid& grid, const Debug& debug,
  * @param window Remains in use until it is closed.
  * @param grid Grid owned by main() and shared across frames.
  * @param debug Diagnostics owned by main(); updated after camera and mouse conversion.
+ * @param grass Sprite for the grass tiles.
+ * @param outline Sprite for the outline tiles.
  */
-void runGame(sf::RenderWindow& window, const Grid& grid, Debug& debug)
+void runGame(sf::RenderWindow& window, const Grid& grid, Debug& debug, sf::Sprite& grass, sf::Sprite& outline)
 {
     const float mapSize = static_cast<float>(grid.getPixelSize());
     sf::View view = window.getView();
@@ -170,7 +186,7 @@ void runGame(sf::RenderWindow& window, const Grid& grid, Debug& debug)
         const auto mousePixels = sf::Mouse::getPosition(window);
         const auto mouseWorld = window.mapPixelToCoords(mousePixels);
         debug.update(deltaSeconds, mousePixels, mouseWorld, grid);
-        drawFrame(window, grid, debug, mouseWorld);
+        drawFrame(window, grid, debug, mouseWorld, grass, outline);
     }
 }
 
@@ -208,9 +224,34 @@ int main(int argc, char* argv[])
         debug.log("Could not load terrain texture: " + terrainPath.string());
         return 1;
     }
+    else
+    {
+        debug.log("Loaded terrain texture: " + terrainPath.string());
+    }
+
+    sf::Sprite grass(terrainTexture, sf::IntRect({0, 0}, {32, 32}));
+    const float middle = static_cast<float>((grid.size / 2) * grid.cellSize);
+    grass.setPosition({middle, middle});
+
+    const auto uiPath = executableFolder /
+        "assets/ui/kenney-pixel-adventure/Tilesheets/Large tiles/Thick outline/tilemap_packed.png";
+
+    sf::Texture uiTexture;
+    if (!uiTexture.loadFromFile(uiPath))
+    {
+        debug.log("Could not load UI texture: " + uiPath.string());
+        return 1;
+    }
+    else
+    {
+        debug.log("Loaded UI texture: " + uiPath.string());
+    }
+
+    const sf::IntRect outlineArea({288, 0}, {32, 32});
+    sf::Sprite outline(uiTexture, outlineArea);
 
     debug.log("Started Beltbound. Press F3 to toggle the debug overlay.");
-    runGame(window, grid, debug);
+    runGame(window, grid, debug, grass, outline);
 
     return 0;
 }

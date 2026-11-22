@@ -15,7 +15,7 @@ Beltbound is a small C++17/SFML 3 learning project. The grid is square: one size
 
 ## Startup and each frame
 
-`main()` owns the window, configured `Grid`, and `Debug`. It calls `setupWindow()`, loads the bundled font, logs startup, and passes these objects to `runGame()`. `runGame()` owns the persistent view and frame clock for the duration of the loop.
+`main()` owns the window, configured `Grid`, `Debug`, and the grass and hover sprites. It sets up the window, loads the font and textures, and passes the sprites to `runGame()`. `runGame()` owns the persistent view and frame clock for the duration of the loop.
 
 The grid stays at the world origin. A persistent game view starts centered on the grid's midpoint and moves with WASD. Resizing changes that view's size to the window's pixel dimensions while preserving its bounded camera center, so cells stay square and one game unit stays one pixel.
 
@@ -31,10 +31,10 @@ updateCamera(window, view, grid, deltaSeconds, focusChanged);
 const auto mousePixels = sf::Mouse::getPosition(window);
 const auto mouseWorld = window.mapPixelToCoords(mousePixels);
 debug.update(deltaSeconds, mousePixels, mouseWorld, grid);
-drawFrame(window, grid, debug, mouseWorld);
+drawFrame(window, grid, debug, mouseWorld, grass, outline);
 ```
 
-`handleEvents()` handles close, focus, F3, and resize. `updateCamera()` applies the focused WASD movement and bounds described above. `drawFrame()` clears the window, calls `drawHover()`, draws the grid and debug overlay, then presents the frame. `drawHover()` uses `Grid`'s shared lookup to place the blue highlight.
+`handleEvents()` handles close, focus, F3, resize, and left-clicks. It maps click pixels through the active view and logs map coordinates. `updateCamera()` applies the focused WASD movement and bounds described above. `drawFrame()` clears the window, draws the grass sprite, draws the grid when enabled, then draws the transparent hover outline and debug overlay before presenting the frame. `drawHover()` uses `Grid`'s shared lookup to position the outline.
 
 `Grid::draw()` keeps the green `RectangleShape` frame and uses full-length horizontal and vertical `RectangleShape` lines. One loop runs `size` times, drawing two lines per index. This gives `2 * size + 1` top-level `target.draw()` calls per grid frame: 201 at the current size of 100. Drawing work grows linearly with cells per side.
 
@@ -42,8 +42,8 @@ To follow the code, start at `main()` for configuration, then read `runGame()` f
 
 ## Debug behavior
 
-The overlay starts visible, and F3 toggles it once per keypress. FPS is averaged over roughly 0.5 seconds. Other values show mouse pixels, mouse world coordinates, the zero-based hovered cell or `outside-grid`, grid dimensions, cell size, and map size. Hover highlighting and the diagnostic cell lookup use the same world coordinates.
+The grid and debug overlay start visible. F3 toggles both once per keypress. FPS is averaged over roughly 0.5 seconds. Other values show mouse pixels, mouse world coordinates, the zero-based hovered cell or `outside-grid`, grid dimensions, cell size, and map size. Hover highlighting and the diagnostic cell lookup use the same world coordinates.
 
 `Debug::draw()` temporarily uses a pixel-based screen view to keep the panel at the top-right, then restores the previous game view. If the font failed to load, drawing the overlay is skipped and the game continues. `loadFont()` reports the failure once through `log()`.
 
-`setConsoleEnabled(false)` silences `Debug::log()` without hiding the overlay. Startup and overlay-toggle messages use `log()`; there is no mouse-position console output inside the frame loops. To hide the overlay, press F3 or call `toggleOverlay()`.
+`setConsoleEnabled(false)` silences `Debug::log()` without hiding the overlay. Startup messages, visibility changes, and left-click map coordinates use `log()`.

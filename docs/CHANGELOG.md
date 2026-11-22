@@ -2,6 +2,12 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-22 - Drew the first grass tile and logged map clicks
+
+- Draws one 32 x 32 grass tile near the center of the map. The hovered cell uses a transparent outline from Kenney's CC0 UI Pack - Pixel Adventure, drawn above the grid. The pack and its license are included in `assets/ui/`.
+- Left-click logs map coordinates through the active camera. The next step is converting a click to a grid row and column and moving the grass tile to that cell.
+- The grass tile and hover outline were visible in the running prototype, and left-click detection was reported working. An isolated MinGW build compiled and linked successfully and copied the Kenney tilesheet used for the outline.
+
 ## 2026-11-21 - Added incremental builds and terrain setup
 
 - Ctrl+Shift+B and F5 use the incremental MinGW build. The separate **Rebuild Beltbound (Full)** task recompiles and relinks everything.
