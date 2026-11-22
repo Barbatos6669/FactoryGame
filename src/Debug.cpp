@@ -120,3 +120,14 @@ const std::string& Debug::getOverlayText() const
 {
     return overlayText;
 }
+
+bool Debug::isGridVisible() const
+{
+    return showGrid;
+}
+
+void Debug::toggleGridVisibility()
+{
+    showGrid = !showGrid;
+    log(showGrid ? "Grid shown" : "Grid hidden");
+}

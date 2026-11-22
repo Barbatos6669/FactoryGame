@@ -22,6 +22,26 @@
             "problemMatcher": [
                 "$gcc"
             ]
+        },
+        {
+            "label": "Rebuild Beltbound (Full)",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/build.ps1",
+                "-Rebuild"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
         }
     ]
 }

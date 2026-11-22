@@ -71,10 +71,15 @@ public:
      */
     const std::string& getOverlayText() const;
 
+    bool isGridVisible() const;
+
+    void toggleGridVisibility();
+
 private:
     sf::Font font;
     bool fontLoaded = false;
     bool consoleEnabled = true;
+    bool showGrid = true;
     bool overlayVisible = true;
     float fpsElapsed = 0.f;
     unsigned int fpsFrames = 0;

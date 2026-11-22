@@ -57,6 +57,7 @@ bool handleEvents(sf::RenderWindow& window, sf::View& view, Debug& debug)
             if (key->code == sf::Keyboard::Key::F3)
             {
                 debug.toggleOverlay();
+                debug.toggleGridVisibility();
             }
         }
 
@@ -136,7 +137,10 @@ void drawFrame(sf::RenderWindow& window, const Grid& grid, const Debug& debug,
 {
     window.clear();
     drawHover(window, grid, mouseWorld);
-    grid.draw(window);
+    if (debug.isGridVisible())
+    {
+        grid.draw(window);
+    }
     debug.draw(window);
     window.display();
 }
@@ -184,12 +188,27 @@ int main(int argc, char* argv[])
     Grid grid;
     grid.setGridSize(100); // Change the number of cells along each side here.
 
-    const auto executableFolder = argc > 0
-        ? std::filesystem::absolute(argv[0]).parent_path()
-        : std::filesystem::current_path();
+    std::filesystem::path executableFolder;
+    if (argc > 0)
+    {
+        executableFolder = std::filesystem::absolute(argv[0]).parent_path();
+    }
+    else
+    {
+        executableFolder = std::filesystem::current_path();
+    }
 
     Debug debug;
     debug.loadFont(executableFolder / "assets/fonts/Tuffy.ttf");
+
+    const auto terrainPath = executableFolder / "assets/tilesets/The Ground v1-1 - Bright.png";
+    sf::Texture terrainTexture;
+    if (!terrainTexture.loadFromFile(terrainPath))
+    {
+        debug.log("Could not load terrain texture: " + terrainPath.string());
+        return 1;
+    }
+
     debug.log("Started Beltbound. Press F3 to toggle the debug overlay.");
     runGame(window, grid, debug);
 

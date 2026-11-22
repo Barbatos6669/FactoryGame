@@ -5,3 +5,8 @@
 *.dll
 *.o
 *.obj
+
+# Locally installed terrain sheets
+/assets/tilesets/The Ground v1-1.png
+/assets/tilesets/The Ground v1-1 - Bright.png
+/assets/tilesets/The Ground v2-6.png
