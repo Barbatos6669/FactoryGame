@@ -4,16 +4,16 @@ Beltbound is an original top-down factory game about gathering resources and bui
 
 ## Current prototype
 
-- **W/A/S/D** pans a camera bounded to the map.
-- The prototype starts with one grass tile near the center of the grid. A transparent Kenney outline marks the hovered cell.
-- **F3** toggles the 100 × 100 grid and debug overlay together.
-- **Left-click** paints grass in the cell under the mouse. Painted cells remain for the current run.
+Six starter cells sit near the center of the grid. Two show the same flowers on grass and dirt. Their definitions are in [`makeSampleTiles()`](src/Tile.cpp), and [`Tile.hpp`](include/Tile.hpp) defines the fields each cell stores.
 
-Next, keep one grass entry per cell when it is clicked repeatedly.
+- **1** selects grass, **2** dirt, and **3** water. **4** selects a rock and **5** flowers. The window title shows the active brush in brackets.
+- **Left-click** paints the selected brush. Painting terrain keeps the existing object. Painting an object on an empty cell puts grass underneath it. **Right-click** clears the object and keeps the terrain.
+- **F2** saves the map to `grass.txt` beside the executable. **F4** loads that file. A row such as `50,50 dirt flower` stores both layers. Older rows such as `50,50` load as plain grass.
+- **W/A/S/D** pan the camera. **F3** toggles the grid and debug overlay. A transparent outline marks the hovered cell.
 
 ![Eight original Tier 1 resource sprites](assets/tilesets/beltbound-resources-tier-1.png)
 
-*Original Tier 1 sprite atlas with eight 32 × 32 resource sprites prepared for future gameplay.*
+*Original Tier 1 sprite atlas. The rock brush uses the stone pile.*
 
 ## Windows setup
 

@@ -1,6 +1,6 @@
 SFML := vendor/SFML-3.1.0
 PROGRAM := build/FactoryGame.exe
-SOURCES := src/main.cpp src/Grid.cpp src/Debug.cpp
+SOURCES := src/main.cpp src/Grid.cpp src/Debug.cpp src/Tile.cpp
 OBJECTS := $(patsubst src/%.cpp,build/obj/%.o,$(SOURCES))
 SFML_LIBRARIES := $(SFML)/lib/libsfml-graphics.a \
                   $(SFML)/lib/libsfml-window.a \

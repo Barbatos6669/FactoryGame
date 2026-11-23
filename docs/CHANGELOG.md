@@ -2,6 +2,13 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-22 - Painted terrain and objects on the same cell
+
+- Each painted cell stores its coordinates, terrain, and optional object in one `Tile`. Six starter cells demonstrate grass, dirt, water, rocks, and the same flowers growing on two different surfaces.
+- Keys **1–5** select the grass, dirt, water, rock, and flower brushes. Left-click paints the chosen layer. Right-click clears the object and leaves the terrain in place.
+- **F2** saves both layers to `grass.txt` beside the executable. **F4** loads the map, including older grass saves containing only `x,y`. A malformed row leaves the current map intact.
+- The normal Windows build passed. Isolated tests checked the rendered tiles, brush input, repeated painting, object removal, F2/F3/F4, and loading older saves.
+
 ## 2026-11-22 - Painted grass with left clicks
 
 - The game starts with grass in the center cell. Left-clicking inside the grid adds a grass cell for the current run. Left clicks outside the grid log map coordinates and leave the grass list alone.
