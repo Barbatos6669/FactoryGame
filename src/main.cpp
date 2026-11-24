@@ -13,12 +13,21 @@
 
 #include <SFML/Graphics.hpp>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "AssetArt.hpp"
+#include "AssetBrowser.hpp"
 #include "Debug.hpp"
+#include "EditorUI.hpp"
+#include "Engineer.hpp"
 #include "Grid.hpp"
+#include "IsometricArt.hpp"
+#include "MapEditor.hpp"
+#include "Projection.hpp"
+#include "TerrainScene.hpp"
 #include "Tile.hpp"
 
 
@@ -26,6 +35,8 @@
 constexpr unsigned int WINDOW_WIDTH = 1920;  ///< Initial window width in pixels.
 constexpr unsigned int WINDOW_HEIGHT = 1080; ///< Initial window height in pixels.
 constexpr float CAMERA_SPEED = 400.f;       ///< Camera movement in world units per second.
+constexpr float MAX_ZOOM = 1.5f;
+constexpr float ZOOM_PER_NOTCH = 0.125f;
 
 /** @brief Open the game window with a 60 FPS limit and repeated key events disabled. */
 void setupWindow(
@@ -37,65 +48,109 @@ void setupWindow(
     window.setKeyRepeatEnabled(false);
 }
 
-struct BrushShortcut
+struct EditorLibrary
 {
-    sf::Keyboard::Key key;
-    Brush brush;
-    const char* label;
+    AssetLibrary assets;
+    AssetBrowser browser;
 };
 
-constexpr BrushShortcut brushShortcuts[] = {
-    {sf::Keyboard::Key::Num1, Brush::Grass,  "1 Grass"},
-    {sf::Keyboard::Key::Num2, Brush::Dirt,   "2 Dirt"},
-    {sf::Keyboard::Key::Num3, Brush::Water,  "3 Water"},
-    {sf::Keyboard::Key::Num4, Brush::Rock,   "4 Rock"},
-    {sf::Keyboard::Key::Num5, Brush::Flower, "5 Flower"}
-};
-
-void showBrushControls(sf::RenderWindow& window, Brush activeBrush)
+// Keyboard shortcuts and clickable controls both come through here.
+void applyEditorCommand(
+    EditorCommand command,
+    MapEditor& editor,
+    EditorUI& ui,
+    Debug& debug,
+    EditorLibrary& library
+)
 {
-    std::string title = "Beltbound  |";
-    for (const BrushShortcut& shortcut : brushShortcuts)
+    switch (command)
     {
-        title += "  ";
-        if (shortcut.brush == activeBrush)
-            title += std::string("[") + shortcut.label + "]";
-        else
-            title += shortcut.label;
+        case EditorCommand::Grass:
+            editor.selectBrush(Brush::Grass);
+            break;
+        case EditorCommand::Dirt:
+            editor.selectBrush(Brush::Dirt);
+            break;
+        case EditorCommand::Water:
+            editor.selectBrush(Brush::Water);
+            break;
+        case EditorCommand::Rock:
+            editor.selectBrush(Brush::Rock);
+            break;
+        case EditorCommand::Flower:
+            editor.selectBrush(Brush::Flower);
+            break;
+        case EditorCommand::Paint:
+            editor.selectTool(TerrainTool::Paint, library.assets);
+            break;
+        case EditorCommand::Stack:
+            editor.selectTool(TerrainTool::Stack, library.assets);
+            break;
+        case EditorCommand::Lower:
+            editor.selectTool(TerrainTool::Lower, library.assets);
+            break;
+        case EditorCommand::Erase:
+            editor.selectTool(TerrainTool::Erase, library.assets);
+            break;
+        case EditorCommand::ToggleLibrary:
+            editor.finishEdit();
+            if (debug.getFont())
+            {
+                library.assets.requestIndex();
+                library.browser.toggle();
+            }
+            else
+                debug.log("The asset library needs assets/fonts/Tuffy.ttf.");
+            break;
+        case EditorCommand::Save:
+        {
+            editor.finishEdit();
+            const bool saved = saveTiles(editor.getTiles(), editor.savePath);
+            ui.notify(saved ? "Map saved" : "Could not write map file");
+            debug.log((saved ? "Saved tiles to " : "Could not save tiles to ") + editor.savePath.string());
+            break;
+        }
+        case EditorCommand::Load:
+        {
+            const bool loaded = editor.loadMap();
+            if (loaded)
+            {
+                ui.notify("Map loaded");
+                // Terrain-only maps can be loaded without opening or indexing the asset library.
+                const bool usesLibrary = std::any_of(editor.getTiles().begin(), editor.getTiles().end(), [](const Tile& tile) {
+                    return std::any_of(tile.layers.begin(), tile.layers.end(), [](const TerrainLayer& layer) {
+                        return !layer.asset.id.empty() || !layer.groundAsset.id.empty();
+                    });
+                });
+                if (usesLibrary)
+                    library.assets.requestIndex();
+            }
+            else
+            {
+                std::error_code error;
+                const bool exists = std::filesystem::exists(editor.savePath, error);
+                ui.notify(!error && !exists ? "No saved map yet" : "Load failed. Current map kept");
+            }
+            debug.log((loaded ? "Loaded tiles from " : "Could not load tiles from ") + editor.savePath.string());
+            break;
+        }
+        case EditorCommand::ToggleGrid:
+            editor.finishEdit();
+            debug.toggleOverlay();
+            debug.toggleGridVisibility();
+            break;
+        case EditorCommand::Canvas:
+        case EditorCommand::Panel:
+            break;
     }
-    title += "  |  Left: paint   Right: clear object   F2: save   F4: load";
-    window.setTitle(title);
 }
 
-struct TileArt
+void resizeWorldView(sf::RenderWindow& window, sf::View& view, sf::Vector2u pixelSize, float zoom)
 {
-    sf::Texture terrain;
-    sf::Texture rock;
-    sf::Texture flower;
-};
-
-bool loadTileArt(TileArt& art, const std::filesystem::path& tilesetFolder)
-{
-    sf::Image sheet;
-    if (!sheet.loadFromFile(tilesetFolder / "The Ground v1-1 - Bright.png"))
-        return false;
-    if (sheet.getSize().x < 1312 || sheet.getSize().y < 96 || !art.terrain.loadFromImage(sheet))
-        return false;
-
-    // The flower tile at (0,32) repeats the grass at (0,0). Keep only the changed pixels.
-    sf::Image flowers({32, 32}, sf::Color::Transparent);
-    for (unsigned int y = 0; y < 32; ++y)
-    {
-        for (unsigned int x = 0; x < 32; ++x)
-        {
-            const sf::Color pixel = sheet.getPixel({x, y + 32});
-            if (pixel != sheet.getPixel({x, y}))
-                flowers.setPixel({x, y}, pixel);
-        }
-    }
-    const sf::IntRect stonePile({96, 0}, {32, 32});
-    return art.flower.loadFromImage(flowers) &&
-           art.rock.loadFromFile(tilesetFolder / "beltbound-resources-tier-1.png", false, stonePile);
+    if (pixelSize.x == 0 || pixelSize.y == 0)
+        return;
+    view.setSize(sf::Vector2f(pixelSize) / zoom);
+    window.setView(view);
 }
 
 /** @brief Handle editor input and report focus changes for the camera. */
@@ -104,9 +159,10 @@ bool handleEvents(
     sf::View& view,
     Debug& debug,
     const Grid& grid,
-    std::vector<Tile>& tiles,
-    Brush& brush,
-    const std::filesystem::path& savePath
+    MapEditor& editor,
+    EditorUI& ui,
+    const IsometricArt& art,
+    EditorLibrary& library
 )
 {
     bool focusChanged = false;
@@ -115,185 +171,191 @@ bool handleEvents(
         if (event->is<sf::Event::Closed>())
         {
             window.close();
+            break;
         }
 
         if (event->is<sf::Event::FocusLost>() || event->is<sf::Event::FocusGained>())
         {
+            editor.finishEdit();
             focusChanged = true;
         }
-
-        if (const auto* key = event->getIf<sf::Event::KeyPressed>())
-        {
-            if (key->code == sf::Keyboard::Key::F2)
-            {
-                const bool saved = saveTiles(tiles, savePath);
-                debug.log((saved ? "Saved tiles to " : "Could not save tiles to ") + savePath.string());
-            }
-            else if (key->code == sf::Keyboard::Key::F3)
-            {
-                debug.toggleOverlay();
-                debug.toggleGridVisibility();
-            }
-            else if (key->code == sf::Keyboard::Key::F4)
-            {
-                const bool loaded = loadTiles(tiles, savePath);
-                debug.log((loaded ? "Loaded tiles from " : "Could not load tiles from ") + savePath.string());
-            }
-            else
-            {
-                for (const BrushShortcut& shortcut : brushShortcuts)
-                {
-                    if (key->code == shortcut.key)
-                    {
-                        brush = shortcut.brush;
-                        showBrushControls(window, brush);
-                        break;
-                    }
-                }
-            }
-        }
+        if (event->is<sf::Event::MouseLeft>())
+            editor.finishEdit();
 
         if (const auto* resized = event->getIf<sf::Event::Resized>())
         {
-            if (resized->size.x > 0 && resized->size.y > 0)
+            editor.finishEdit();
+            resizeWorldView(window, view, resized->size, editor.zoom);
+        }
+        if (library.browser.isOpen())
+        {
+            editor.finishEdit();
+            const auto stamp = library.browser.handleEvent(*event, window.getSize(), library.assets.index(),
+                                                           editor.getSelectedAsset());
+            if (stamp)
+                editor.selectStamp(*stamp);
+            focusChanged = true; // Typing and navigating the library never moves the engineer.
+            continue;
+        }
+        if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+        {
+            if (key->code == sf::Keyboard::Key::Z && key->control && !key->alt && !key->shift && !key->system)
             {
-                view.setSize(sf::Vector2f(resized->size));
-                window.setView(view);
+                if (window.hasFocus())
+                {
+                    const bool undone = editor.undoEdit();
+                    ui.notify(undone ? "Undid last edit" : "Nothing to undo");
+                }
+            }
+            else if (key->code == sf::Keyboard::Key::Escape)
+                editor.cancelSelection();
+            else
+                applyEditorCommand(editorCommandForKey(key->code), editor, ui, debug, library);
+        }
+        if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>())
+        {
+            if (wheel->wheel == sf::Mouse::Wheel::Vertical && std::isfinite(wheel->delta) &&
+                editorHit(ui, debug, window.getSize(), wheel->position) == EditorCommand::Canvas)
+            {
+                const float zoom = std::clamp(editor.zoom + wheel->delta * ZOOM_PER_NOTCH,
+                                              MapEditor::minimumZoom, MAX_ZOOM);
+                if (zoom != editor.zoom)
+                    editor.finishEdit();
+                editor.zoom = zoom;
+                resizeWorldView(window, view, window.getSize(), editor.zoom);
+            }
+        }
+        if (const auto* move = event->getIf<sf::Event::MouseMoved>())
+            editor.dragTo(move->position, window, window.hasFocus(), grid, debug, ui, art, library.assets);
+        if (const auto* release = event->getIf<sf::Event::MouseButtonReleased>())
+        {
+            if (release->button == sf::Mouse::Button::Left)
+            {
+                editor.dragTo(release->position, window, window.hasFocus(), grid, debug, ui, art, library.assets);
+                editor.finishEdit();
             }
         }
         if (const auto* click = event->getIf<sf::Event::MouseButtonPressed>())
         {
             if (click->button != sf::Mouse::Button::Left && click->button != sf::Mouse::Button::Right)
                 continue;
-            const auto clickWorld = window.mapPixelToCoords(click->position);
-            debug.log("Map click: " + std::to_string(clickWorld.x) + ", " + std::to_string(clickWorld.y));
-            if (grid.contains(clickWorld))
+            editor.finishEdit();
+            if (!window.hasFocus() || !insideWindow(click->position, window.getSize()))
+                continue;
+            const EditorCommand hit = editorHit(ui, debug, window.getSize(), click->position);
+            if (hit != EditorCommand::Canvas)
             {
-                const auto cell = grid.worldToCell(clickWorld);
                 if (click->button == sf::Mouse::Button::Left)
-                    paintTile(tiles, cell, brush);
+                    applyEditorCommand(hit, editor, ui, debug, library);
+                continue;
+            }
+            const auto cell = pickTerrainCell(grid, editor.getTiles(), projectedMousePoint(window, click->position), art,
+                                              &library.assets);
+            if (cell)
+            {
+                if (click->button == sf::Mouse::Button::Left)
+                    editor.pressCell(*cell, click->position, view, ui, library.assets);
                 else
-                    clearTileObject(tiles, cell);
-                debug.log("Clicked cell: " + std::to_string(cell.x) + ", " + std::to_string(cell.y));
+                    editor.clearDecoration(*cell);
+                debug.log("Clicked cell: " + std::to_string(cell->x) + ", " + std::to_string(cell->y));
             }
         }
     }
     return focusChanged;
 }
 
-/**
- * @brief Pan with WASD and apply the bounded world view before mouse conversion.
- * @param window Supplies focus state and receives the updated view.
- * @param view Persistent camera; its center is clamped to [0, grid.getPixelSize()] per axis.
- * @param grid Defines the inclusive camera-center bounds, not viewport bounds.
- * @param deltaSeconds Elapsed frame time in seconds; movement uses at most 0.05 seconds.
- * @param focusChanged Suppresses movement on frames containing a focus change.
- * @note Movement requires focus; opposite keys cancel and diagonals are normalized.
- */
-void updateCamera(
+sf::Vector2f heldDirection(sf::Keyboard::Key up, sf::Keyboard::Key down,
+                           sf::Keyboard::Key left, sf::Keyboard::Key right)
+{
+    sf::Vector2f direction;
+    if (sf::Keyboard::isKeyPressed(up))    direction.y -= 1.f;
+    if (sf::Keyboard::isKeyPressed(down))  direction.y += 1.f;
+    if (sf::Keyboard::isKeyPressed(left))  direction.x -= 1.f;
+    if (sf::Keyboard::isKeyPressed(right)) direction.x += 1.f;
+    return direction;
+}
+
+/** @brief Walk the engineer and center the camera on his new position each step. */
+void updateWorld(
     sf::RenderWindow& window,
     sf::View& view,
     const Grid& grid,
+    Engineer* engineer,
     float deltaSeconds,
-    bool focusChanged
+    bool focusChanged,
+    const std::vector<Tile>& tiles,
+    bool& followEngineer
 )
 {
-    if (!window.hasFocus() || focusChanged)
-        return;
-
-    sf::Vector2f direction;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) direction.y -= 1.f;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) direction.y += 1.f;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) direction.x -= 1.f;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) direction.x += 1.f;
-
-    if (direction.lengthSquared() == 0.f)
-        return;
-
-    // Limit movement after a pause or unusually long frame.
-    const float cameraSeconds = std::clamp(deltaSeconds, 0.f, 0.05f);
-    view.move(direction.normalized() * CAMERA_SPEED * cameraSeconds);
     const float mapSize = static_cast<float>(grid.getPixelSize());
-    sf::Vector2f center = view.getCenter();
-    center.x = std::clamp(center.x, 0.f, mapSize);
-    center.y = std::clamp(center.y, 0.f, mapSize);
-    view.setCenter(center);
-    window.setView(view);
-}
-
-/**
- * @brief Draw the hover outline when the mouse lies inside the grid.
- * @param target Draws using its active world view.
- * @param grid Supplies cell bounds and world-to-cell conversion.
- * @param mouseWorld Mouse position already mapped through the world view.
- * @param outline Sprite for the outline tiles.
- */
-void drawHover(
-    sf::RenderTarget& target,
-    const Grid& grid,
-    sf::Vector2f mouseWorld,
-    sf::Sprite& outline
-)
-{
-    if (!grid.contains(mouseWorld))
-        return;
-
-    const auto cell = grid.worldToCell(mouseWorld);
-    outline.setPosition({static_cast<float>(cell.x * grid.cellSize),
-                         static_cast<float>(cell.y * grid.cellSize)});
-    target.draw(outline);
-}
-
-/** @brief Draw the terrain first so that any object appears on top of it. */
-void drawTiles(sf::RenderTarget& target, const std::vector<Tile>& tiles, int cellSize, const TileArt& art)
-{
-    sf::Sprite ground(art.terrain);
-    sf::Sprite object(art.rock);
-    const float scale = static_cast<float>(cellSize) / 32.f;
-    ground.setScale({scale, scale});
-    object.setScale({scale, scale});
-
-    for (const Tile& tile : tiles)
+    if (!window.hasFocus() || focusChanged)
     {
-        const sf::Vector2f position(static_cast<float>(tile.cell.x) * cellSize,
-                                    static_cast<float>(tile.cell.y) * cellSize);
-        switch (tile.terrain)
-        {
-            case TerrainType::Grass: ground.setTextureRect({{0, 0}, {32, 32}});    break;
-            case TerrainType::Dirt:  ground.setTextureRect({{0, 64}, {32, 32}});   break;
-            case TerrainType::Water: ground.setTextureRect({{1280, 0}, {32, 32}}); break;
-        }
-        ground.setPosition(position);
-        target.draw(ground);
+        if (engineer)
+            engineer->update({}, 0.f, mapSize);
+        return;
+    }
 
-        if (tile.object != TileObject::None)
+    using Key = sf::Keyboard::Key;
+    const sf::Vector2f movement = heldDirection(Key::W, Key::S, Key::A, Key::D);
+    sf::Vector2f pan = heldDirection(Key::Up, Key::Down, Key::Left, Key::Right);
+    if (engineer)
+    {
+        engineer->update(movement, deltaSeconds, mapSize);
+        if (movement != sf::Vector2f{})
+            followEngineer = true;
+        else if (pan != sf::Vector2f{})
+            followEngineer = false;
+        if (followEngineer)
         {
-            object.setTexture(tile.object == TileObject::Rock ? art.rock : art.flower);
-            object.setPosition(position);
-            target.draw(object);
+            const auto feet = engineer->getPosition();
+            view.setCenter(mapToView(feet) - sf::Vector2f{0.f, terrainElevationAt(grid, tiles, feet)});
+            window.setView(view);
+            return;
         }
     }
+
+    if (!engineer && movement != sf::Vector2f{})
+        pan = movement;
+    if (pan == sf::Vector2f{})
+        return;
+
+    const float seconds = std::clamp(deltaSeconds, 0.f, 0.05f);
+    view.move(pan.normalized() * CAMERA_SPEED * seconds);
+    // Start a free pan on the engineer's height plane, even at a raised map corner.
+    const float panHeight = engineer ? terrainElevationAt(grid, tiles, engineer->getPosition()) : 0.f;
+    const sf::Vector2f lift{0.f, panHeight};
+    sf::Vector2f center = viewToMap(view.getCenter() + lift);
+    center.x = std::clamp(center.x, 0.f, mapSize);
+    center.y = std::clamp(center.y, 0.f, mapSize);
+    view.setCenter(mapToView(center) - lift);
+    window.setView(view);
 }
 
 void drawFrame(
     sf::RenderWindow& window,
     const Grid& grid,
     const Debug& debug,
-    sf::Vector2f mouseWorld,
-    const TileArt& art,
-    sf::Sprite& outline,
-    const std::vector<Tile>& tiles
+    std::optional<sf::Vector2i> hoveredCell,
+    const IsometricArt& art,
+    const MapEditor& editor,
+    const Engineer* engineer,
+    const EditorUI& ui,
+    sf::Vector2i mousePixels,
+    EditorLibrary& library
 )
 {
     window.clear();
-    drawTiles(window, tiles, grid.cellSize, art);
-    if (debug.isGridVisible())
-    {
-        grid.draw(window);
-    }
-
-    drawHover(window, grid, mouseWorld, outline);
+    const auto& selectedAsset = editor.getSelectedAsset();
+    drawIsometricMap(window, grid, editor.getTiles(), art, engineer, debug.isGridVisible(), hoveredCell,
+                     &library.assets, &selectedAsset, editor.getTool() == TerrainTool::Stack);
     debug.draw(window);
+    const AssetEntry* selected = selectedAsset.id.empty() ? nullptr : library.assets.index().find(selectedAsset.id);
+    ui.draw(window, art, editor.getBrush(), editor.getTool(), debug.isGridVisible(), mousePixels,
+            window.hasFocus() && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left),
+            selected ? selected->name : std::string_view{});
+    if (library.browser.isOpen())
+        library.browser.draw(window, library.assets.index(), library.assets.art, selectedAsset,
+                             library.assets.indexing());
     window.display();
 }
 
@@ -302,35 +364,49 @@ void runGame(
     sf::RenderWindow& window,
     const Grid& grid,
     Debug& debug,
-    const TileArt& art,
-    sf::Sprite& outline,
-    const std::filesystem::path& savePath
+    const IsometricArt& art,
+    const std::filesystem::path& savePath,
+    Engineer* engineer
 )
 {
     const float mapSize = static_cast<float>(grid.getPixelSize());
+    MapEditor editor{makeSampleTiles(grid.size), savePath};
+    EditorUI ui(debug.getFont());
+    EditorLibrary library{AssetLibrary(savePath.parent_path() / "assets"), AssetBrowser(debug.getFont())};
+    bool followEngineer = engineer != nullptr;
     sf::View view = window.getView();
-    view.setCenter({mapSize / 2.f, mapSize / 2.f});
-    window.setView(view);
+    const sf::Vector2f start = engineer ? engineer->getPosition() : sf::Vector2f(mapSize / 2.f, mapSize / 2.f);
+    const float startHeight = engineer ? terrainElevationAt(grid, editor.getTiles(), start) : 0.f;
+    view.setCenter(mapToView(start) - sf::Vector2f{0.f, startHeight});
+    resizeWorldView(window, view, window.getSize(), editor.zoom);
     sf::Clock frameClock;
-    std::vector<Tile> tiles = makeSampleTiles(grid.size);
-    Brush brush = Brush::Grass;
-    showBrushControls(window, brush);
+    if (!debug.getFont())
+        window.setTitle("Beltbound | 1-5 Brushes | P Paint  B Raise  L Lower  E Erase | Ctrl+Z Undo | F2 Save  F4 Load  F3 Grid");
 
     while (window.isOpen())
     {
+        const bool wasIndexing = library.assets.indexing();
+        library.assets.pollIndex();
+        if (wasIndexing && !library.assets.indexing())
+            editor.finishEdit(); // Newly available stamps can change which cell is visible.
         const float deltaSeconds = frameClock.restart().asSeconds();
-        const bool focusChanged = handleEvents(window, view, debug, grid, tiles, brush, savePath);
+        const bool focusChanged = handleEvents(window, view, debug, grid, editor, ui, art, library);
         if (!window.isOpen())
         {
             debug.log("Window closed; exiting game loop.");
             break;
         }
 
-        updateCamera(window, view, grid, deltaSeconds, focusChanged);
+        updateWorld(window, view, grid, engineer, deltaSeconds, focusChanged || library.browser.isOpen(),
+                    editor.getTiles(), followEngineer);
+        editor.finishIfCameraMoved(view);
         const auto mousePixels = sf::Mouse::getPosition(window);
-        const auto mouseWorld = window.mapPixelToCoords(mousePixels);
-        debug.update(deltaSeconds, mousePixels, mouseWorld, grid);
-        drawFrame(window, grid, debug, mouseWorld, art, outline, tiles);
+        const auto projectedPoint = projectedMousePoint(window, mousePixels);
+        const bool overUI = library.browser.isOpen() || editorHit(ui, debug, window.getSize(), mousePixels) != EditorCommand::Canvas;
+        const auto hoveredCell = overUI ? std::nullopt : pickTerrainCell(grid, editor.getTiles(), projectedPoint, art,
+                                                                        &library.assets);
+        debug.update(deltaSeconds, mousePixels, viewToMap(projectedPoint), grid, hoveredCell, overUI);
+        drawFrame(window, grid, debug, hoveredCell, art, editor, engineer, ui, mousePixels, library);
     }
 }
 
@@ -366,33 +442,22 @@ int main(
     const std::filesystem::path savePath = executableFolder / "grass.txt";
     debug.loadFont(executableFolder / "assets/fonts/Tuffy.ttf");
 
-    TileArt art;
-    const auto tilesetFolder = executableFolder / "assets/tilesets";
-    if (!loadTileArt(art, tilesetFolder))
-    {
-        debug.log("Could not load tile art from " + tilesetFolder.string());
-        return 1;
-    }
+    const auto packFolder = executableFolder / "assets/mythryl-studio/tiny-warfare";
+    IsometricArt art;
+    if (!loadIsometricArt(art, packFolder))
+        debug.log("Tiny Warfare terrain unavailable. Using built-in isometric art.");
 
-    const auto uiPath = executableFolder /
-        "assets/ui/kenney-pixel-adventure/Tilesheets/Large tiles/Thick outline/tilemap_packed.png";
-
-    sf::Texture uiTexture;
-    if (!uiTexture.loadFromFile(uiPath))
-    {
-        debug.log("Could not load UI texture: " + uiPath.string());
-        return 1;
-    }
+    // The starter patch has open grass in its middle cell.
+    const float spawn = (grid.size / 2 + 0.5f) * grid.cellSize;
+    Engineer engineer({spawn, spawn});
+    Engineer* activeEngineer = engineer.load(packFolder) ? &engineer : nullptr;
+    if (activeEngineer)
+        debug.log("WASD walks the woodland engineer. Use the arrows to pan while standing still.");
     else
-    {
-        debug.log("Loaded UI texture: " + uiPath.string());
-    }
-
-    const sf::IntRect outlineArea({288, 0}, {32, 32});
-    sf::Sprite outline(uiTexture, outlineArea);
+        debug.log("Woodland engineer sheets unavailable in " + packFolder.string() + ". WASD or arrows pan the map.");
 
     debug.log("Started Beltbound. Press F3 to toggle the debug overlay.");
-    runGame(window, grid, debug, art, outline, savePath);
+    runGame(window, grid, debug, art, savePath, activeEngineer);
 
     return 0;
 }

@@ -6,12 +6,34 @@
 #include <iostream>
 #include <sstream>
 
+namespace
+{
+constexpr float padding = 12.f;
+constexpr float margin = 16.f;
+constexpr unsigned int textSize = 18;
+}
+
 bool Debug::loadFont(const std::filesystem::path& path)
 {
     fontLoaded = font.openFromFile(path);
     if (!fontLoaded)
         log("Could not load debug font: " + path.string());
+    else if (!overlayText.empty())
+        textBounds = sf::Text(font, overlayText, textSize).getLocalBounds();
     return fontLoaded;
+}
+
+const sf::Font* Debug::getFont() const
+{
+    return fontLoaded ? &font : nullptr;
+}
+
+sf::FloatRect Debug::panelBounds(sf::Vector2u windowSize) const
+{
+    if (!fontLoaded || !overlayVisible || !windowSize.x || !windowSize.y || overlayText.empty())
+        return {};
+    const sf::Vector2f size = textBounds.size + sf::Vector2f{2.f * padding, 2.f * padding};
+    return {{static_cast<float>(windowSize.x) - size.x - margin, margin}, size};
 }
 
 void Debug::setConsoleEnabled(bool enabled)
@@ -42,7 +64,8 @@ bool Debug::isOverlayVisible() const
 }
 
 void Debug::update(float deltaSeconds, sf::Vector2i mousePixels,
-                   sf::Vector2f mouseWorld, const Grid& grid)
+                   sf::Vector2f mouseWorld, const Grid& grid, std::optional<sf::Vector2i> hoveredCell,
+                   bool mouseOverUI)
 {
     if (deltaSeconds > 0.f && std::isfinite(deltaSeconds))
     {
@@ -61,13 +84,16 @@ void Debug::update(float deltaSeconds, sf::Vector2i mousePixels,
          << std::fixed << std::setprecision(1)
          << "FPS: " << framesPerSecond << '\n'
          << "Mouse px: (" << mousePixels.x << ", " << mousePixels.y << ")\n"
-         << "Mouse world: (" << mouseWorld.x << ", " << mouseWorld.y << ")\n"
+         << "Base plane: (" << mouseWorld.x << ", " << mouseWorld.y << ")\n"
          << "Cell: ";
 
-    if (grid.contains(mouseWorld))
+    if (mouseOverUI)
     {
-        const sf::Vector2i cell = grid.worldToCell(mouseWorld);
-        text << '(' << cell.x << ", " << cell.y << ')';
+        text << "UI";
+    }
+    else if (hoveredCell)
+    {
+        text << '(' << hoveredCell->x << ", " << hoveredCell->y << ')';
     }
     else
     {
@@ -78,32 +104,28 @@ void Debug::update(float deltaSeconds, sf::Vector2i mousePixels,
          << "Grid: " << grid.size << " x " << grid.size
          << " / " << grid.cellSize << " px\n"
          << "Map: " << grid.getPixelSize() << " x " << grid.getPixelSize() << " px";
-    overlayText = text.str();
+    const std::string updatedText = text.str();
+    if (updatedText != overlayText)
+    {
+        overlayText = updatedText;
+        if (fontLoaded)
+            textBounds = sf::Text(font, overlayText, textSize).getLocalBounds();
+    }
 }
 
 void Debug::draw(sf::RenderTarget& target) const
 {
-    if (!fontLoaded || !overlayVisible)
-        return;
-
     const sf::Vector2u targetSize = target.getSize();
-    if (targetSize.x == 0 || targetSize.y == 0)
+    const sf::FloatRect bounds = panelBounds(targetSize);
+    if (bounds.size.x == 0.f)
         return;
 
-    sf::Text text(font, overlayText, 18);
+    sf::Text text(font, overlayText, textSize);
     text.setFillColor(sf::Color(235, 240, 245));
-    const sf::FloatRect bounds = text.getLocalBounds();
-    const float padding = 12.f;
-    const float margin = 16.f;
-    const sf::Vector2f panelSize(bounds.size.x + padding * 2.f,
-                               bounds.size.y + padding * 2.f);
-    const float panelX = static_cast<float>(targetSize.x) - panelSize.x - margin;
-
-    sf::RectangleShape panel(panelSize);
-    panel.setPosition({panelX, margin});
+    sf::RectangleShape panel(bounds.size);
+    panel.setPosition(bounds.position);
     panel.setFillColor(sf::Color(18, 22, 29, 235));
-    text.setPosition({panelX + padding - bounds.position.x,
-                      margin + padding - bounds.position.y});
+    text.setPosition(bounds.position + sf::Vector2f{padding, padding} - textBounds.position);
 
     // Save by value: setView() would also change a reference returned by getView().
     const sf::View previousView = target.getView();

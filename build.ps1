@@ -54,10 +54,19 @@ try {
 
     $assets = Join-Path $root 'assets'
     if (Test-Path -LiteralPath $assets -PathType Container) {
-        foreach ($file in Get-ChildItem -LiteralPath $assets -Recurse -File) {
-            $relativePath = $file.FullName.Substring($assets.Length + 1)
-            Copy-RuntimeFile $file.FullName (Join-Path $build ('assets\' + $relativePath))
+        $robocopy = Join-Path ([Environment]::SystemDirectory) 'robocopy.exe'
+        $runtimeAssets = Join-Path $build 'assets'
+        $copyOptions = '/S', '/XX', '/XJD', '/DCOPY:D', '/XA:H', '/R:0', '/W:0',
+                       '/NFL', '/NDL', '/NP', '/NJH', '/NJS'
+        # Robocopy can enter hidden directories even when it excludes hidden files.
+        $hiddenDirectories = @(Get-ChildItem -LiteralPath $assets -Recurse -Directory -Hidden |
+            Select-Object -ExpandProperty FullName)
+        if ($hiddenDirectories.Count -gt 0) {
+            $copyOptions += @('/XD') + $hiddenDirectories
         }
+        & $robocopy $assets $runtimeAssets @copyOptions
+        # Robocopy uses exit codes 0 through 7 for successful runs.
+        if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
     }
     Write-Host 'Build successful (SFML 3.1.0). Run .\build\FactoryGame.exe'
 }
@@ -65,3 +74,4 @@ finally {
     Pop-Location
     $buildLock.Dispose()
 }
+exit 0

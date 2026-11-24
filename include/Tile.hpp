@@ -2,24 +2,54 @@
 
 #include <SFML/System/Vector2.hpp>
 #include <filesystem>
+#include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
 enum class TerrainType { Grass, Dirt, Water };
 enum class TileObject { None, Rock, Flower };
 
-/// One painted cell has a ground surface and can hold one object on top.
+struct AssetPlacement
+{
+    std::string id;
+    int row = 0;
+    int frame = 0;
+};
+
+struct TerrainLayer
+{
+    TerrainType terrain = TerrainType::Grass;
+    TileObject object = TileObject::None;
+    AssetPlacement asset{};
+    AssetPlacement groundAsset{};
+};
+
+inline constexpr int MAX_TERRAIN_LAYERS = 8;
+
+/// A painted cell has one or more blocks, ordered from bottom to top.
 struct Tile
 {
     sf::Vector2i cell;
-    TerrainType terrain = TerrainType::Grass;
-    TileObject object = TileObject::None;
+    std::vector<TerrainLayer> layers = {TerrainLayer{}};
 };
 
 enum class Brush { Grass, Dirt, Water, Rock, Flower };
 
 std::vector<Tile> makeSampleTiles(int gridSize);
+const Tile* findTile(const std::vector<Tile>& tiles, sf::Vector2i cell);
 void paintTile(std::vector<Tile>& tiles, sf::Vector2i cell, Brush brush);
+bool placeAsset(std::vector<Tile>& tiles, sf::Vector2i cell, const AssetPlacement& asset, bool groundSurface = false);
 void clearTileObject(std::vector<Tile>& tiles, sf::Vector2i cell);
+
+/// Add a block, or create the base if the cell is empty. False when full.
+bool stackTile(std::vector<Tile>& tiles, sf::Vector2i cell, TerrainType terrain);
+/// Remove the top block. False if the cell is empty or has only its base.
+bool lowerTile(std::vector<Tile>& tiles, sf::Vector2i cell);
+/// Remove the exposed block, including the base if it is the last one. False if empty.
+bool eraseTile(std::vector<Tile>& tiles, sf::Vector2i cell);
+/// Erase one layer per cell and close the gaps left by removed base blocks together.
+void eraseTiles(std::vector<Tile>& tiles, const std::set<std::pair<int, int>>& cells);
 
 bool saveTiles(const std::vector<Tile>& tiles, const std::filesystem::path& path);
 bool loadTiles(std::vector<Tile>& tiles, const std::filesystem::path& path);

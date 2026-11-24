@@ -1,6 +1,8 @@
 SFML := vendor/SFML-3.1.0
 PROGRAM := build/FactoryGame.exe
-SOURCES := src/main.cpp src/Grid.cpp src/Debug.cpp src/Tile.cpp
+SOURCES := src/main.cpp src/Grid.cpp src/Debug.cpp src/Tile.cpp src/Engineer.cpp src/IsometricArt.cpp \
+           src/TerrainScene.cpp src/EditorUI.cpp src/AssetCatalog.cpp src/AssetArt.cpp \
+           src/AssetBrowser.cpp src/AssetBrowserDraw.cpp src/MapEditor.cpp src/EditHistory.cpp
 OBJECTS := $(patsubst src/%.cpp,build/obj/%.o,$(SOURCES))
 SFML_LIBRARIES := $(SFML)/lib/libsfml-graphics.a \
                   $(SFML)/lib/libsfml-window.a \

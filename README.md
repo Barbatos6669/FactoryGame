@@ -1,25 +1,42 @@
 # Beltbound
 
-Beltbound is an original top-down factory game about gathering resources and building a factory. It's a learning project built with C++17 and SFML 3.1.
+Beltbound is an isometric factory game about gathering resources and building a factory. It's a learning project built with C++17 and SFML 3.1.
 
 ## Current prototype
 
-Six starter cells sit near the center of the grid. Two show the same flowers on grass and dirt. Their definitions are in [`makeSampleTiles()`](src/Tile.cpp), and [`Tile.hpp`](include/Tile.hpp) defines the fields each cell stores.
+Six starter cells sit near the engineer. The rock to his front-right sits on three blocks: dirt, grass, then dirt again. Their definitions are in [`makeSampleTiles()`](src/Tile.cpp).
 
-- **1** selects grass, **2** dirt, and **3** water. **4** selects a rock and **5** flowers. The window title shows the active brush in brackets.
-- **Left-click** paints the selected brush. Painting terrain keeps the existing object. Painting an object on an empty cell puts grass underneath it. **Right-click** clears the object and keeps the terrain.
-- **F2** saves the map to `grass.txt` beside the executable. **F4** loads that file. A row such as `50,50 dirt flower` stores both layers. Older rows such as `50,50` load as plain grass.
-- **W/A/S/D** pan the camera. **F3** toggles the grid and debug overlay. A transparent outline marks the hovered cell.
+- Click a brush in the editor palette, or use **1–5** for grass, dirt, water, rock, and flowers. The selected brush stays highlighted.
+- Use the palette buttons to save or load the map or toggle the grid and diagnostics. Save and load results appear on screen. To paint or zoom, point at the map outside the panels.
+- **Paint (P)** changes the exposed surface or its decoration. **Raise (B)** adds the selected terrain on top, up to eight blocks per cell. **Lower (L)** removes the top block and reveals what was underneath. The base stays in place.
+- **Erase (E)** removes the exposed block and anything on it. Click once to peel one layer, or hold the left button and drag to peel one layer from each cell you cross. Release and press again to peel another layer. Erasing the last block leaves an empty cell. Press **P** or select a brush to paint again.
+- **Ctrl+Z** undoes the last map edit. An entire erase or paint drag counts as one edit, even if you press Ctrl+Z before releasing the mouse. Press again to undo the previous edit. **F2** saves your current map and keeps undo history. Loading a map with **F4** starts a fresh history.
+- To paint a path, choose **Paint** and grass, dirt, water, or a library terrain stamp. Hold the left mouse button and drag over the map. Crossing a panel or map edge, moving the camera, or changing tools ends the stroke. Release and press again to start a new one.
+- **Left-click** a block's visible top or side to use the selected tool. **Right-click** clears the exposed decoration. Choosing Rock or Flower switches back to Paint. A decoration placed on an empty cell gets grass underneath.
+- Try **2** (Dirt), then **4** (Rock), and click an empty cell to place a rock. Press **B** (Raise) and click the rock. Raise remembers Dirt and covers the rock with a dirt block. Press **Ctrl+Z** to reveal the rock again.
+- **F2** saves all blocks and their decorations to `grass.txt` beside the executable. **F4** loads the map, including earlier grass-only and single-block saves.
+- **W/A/S/D** walk the blue woodland engineer. Hold two neighboring directions to walk diagonally. Release the keys to idle facing the last direction of travel.
+- The camera stays centered on the engineer as he walks. **Arrow keys** let you look around while standing still. Your next step centers the camera on him again. Without the optional engineer sheets, both WASD and the arrows pan the editor.
+- **Scroll up** to zoom in, up to 1.5× after four wheel notches. **Scroll down** to return to the original 1× view.
+- **F3** toggles the grid and debug overlay. A yellow diamond marks the hovered cell.
+
+### Developer asset library
+
+Click **Library** or press **Tab**. Type a name, material, team color or biome. The category menu and **Placeable only** filter narrow the results. Scroll or use **Prev** and **Next** to browse. Select a card to inspect it, choose its facing and frame, then click **Use stamp**. A translucent preview follows the pointer. Left-click the map to place it. **Esc** closes the library while browsing. On the map, **Esc** clears the active stamp.
+
+With the optional Tiny Warfare pack installed, search for **snow ice**, select a terrain stamp and paint a cell. Open the library again, search for **copper**, and stamp the deposit on that same cell. Right-click removes the deposit and leaves the snow. Raise can add another block of the selected library terrain. **F2** and **F4** save and restore both choices on each layer.
+
+The public checkout includes all eight Beltbound resource sprites and the original eight-direction field engineer as static stamps. You can also inspect the Kenney UI artwork and font. Installing Tiny Warfare adds terrain, buildings, walls, units, vehicles, effects and props, along with pack references such as team masks and terrain guides. The library indexes the locally installed files in the background the first time they are needed.
 
 ![Eight original Tier 1 resource sprites](assets/tilesets/beltbound-resources-tier-1.png)
 
-*Original Tier 1 sprite atlas. The rock brush uses the stone pile.*
+*Beltbound's original Tier 1 resource art.*
 
 ## Windows setup
 
 1. Install **WinLibs GCC 14.2.0 (64-bit UCRT, SEH)** so the compiler and GNU Make are available at `C:\mingw64\bin\g++.exe` and `C:\mingw64\bin\mingw32-make.exe`. The VS Code debugger uses `C:\mingw64\bin\gdb.exe` from the same package. [Matching toolchain and SFML downloads](https://www.sfml-dev.org/download/sfml/3.1.0/)
 2. From that download page, choose the **SFML 3.1.0 Windows package for GCC 14.2.0 MinGW (UCRT), 64-bit**. Extract it so the `include`, `lib`, and `bin` folders sit directly inside `vendor/SFML-3.1.0`.
-3. Obtain a licensed copy of Backterria's Adventure terrain sheet (`The Ground v1-1.png`). Copy it to `assets/tilesets/The Ground v1-1 - Bright.png` before building. The original and bright variant share the same tile layout. Beltbound exits if it cannot load the sheet at startup. Keep the paid sheets and modified copies local. [The Ground on itch.io](https://backterria.itch.io/the-ground)
+3. The editor includes basic isometric terrain and objects. For the textured terrain, rock and animated engineer, extract the optional purchased `tiny-warfare-paid-sprites.zip` into `assets/mythryl-studio/tiny-warfare/` with `sprites.json`, `README.txt`, and `LICENSE.txt` at its root. Keep the pack's subfolders intact. The normal build copies the assets beside the executable. [Tiny Warfare on itch.io](https://mythrylstudio.itch.io/tiny-warfare)
 
 ## Build and run
 
@@ -33,4 +50,5 @@ From PowerShell in the repository root, run `.\build.ps1` for an incremental bui
 
 - [Development log](docs/CHANGELOG.md)
 - [Architecture notes](docs/architecture.md)
+- [Terrain and feature catalog](docs/terrain-catalog.md)
 - [Asset credits and licenses](docs/credits.md)

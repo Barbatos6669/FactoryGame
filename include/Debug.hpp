@@ -2,6 +2,7 @@
 
 #include <SFML/Graphics.hpp>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 class Grid;
@@ -19,6 +20,8 @@ public:
      * @return True when loaded; false leaves overlay drawing disabled.
      */
     bool loadFont(const std::filesystem::path& path);
+    const sf::Font* getFont() const;
+    sf::FloatRect panelBounds(sf::Vector2u windowSize) const;
 
     /**
      * @brief Enable or disable console logging without changing overlay visibility.
@@ -53,10 +56,13 @@ public:
      * @param deltaSeconds Elapsed frame time in seconds.
      * @param mousePixels Mouse position relative to the window, in pixels.
      * @param mouseWorld Mouse position mapped through the active world view.
-     * @param grid Grid used for cell lookup and dimension information.
+     * @param grid Grid dimensions.
+     * @param hoveredCell Visible column or empty map cell under the pointer.
+     * @param mouseOverUI Display UI in place of a hovered cell when a panel covers the pointer.
      */
     void update(float deltaSeconds, sf::Vector2i mousePixels,
-                sf::Vector2f mouseWorld, const Grid& grid);
+                sf::Vector2f mouseWorld, const Grid& grid, std::optional<sf::Vector2i> hoveredCell,
+                bool mouseOverUI);
 
     /**
      * @brief Draw the visible, loaded overlay at the target's top right in pixel space.
@@ -85,4 +91,5 @@ private:
     unsigned int fpsFrames = 0;
     float framesPerSecond = 0.f;
     std::string overlayText;
+    sf::FloatRect textBounds;
 };

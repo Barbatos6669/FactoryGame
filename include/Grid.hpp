@@ -3,8 +3,8 @@
 #include <SFML/Graphics/RenderTarget.hpp>
 
 /**
- * @brief A square grid beginning at world position (0, 0).
- * Cell dimensions use world units, matching pixels in the current unscaled view.
+ * @brief A square logical map drawn as isometric diamonds.
+ * The map begins at (0, 0). Cell dimensions are in logical map units.
  */
 class Grid
 {
@@ -14,7 +14,7 @@ public:
 
     /**
      * @brief Get the extent of one side of the square grid.
-     * @return Side length in world units (pixels in the current unscaled view).
+     * @return Side length in logical map units.
      */
     int getPixelSize() const;
 
@@ -41,9 +41,10 @@ public:
     sf::Vector2i worldToCell(sf::Vector2f worldPosition) const;
 
     /**
-     * @brief Draw white lines one world unit thick and a green grid outline.
-     * Uses the active view without changing it; call after drawing a hover fill.
+     * @brief Draw white diamond grid lines and a green border in the current view.
      * @param target Render target for the grid.
      */
     void draw(sf::RenderTarget& target) const;
+
+    void drawCellOutline(sf::RenderTarget& target, sf::Vector2i cell, float elevation, sf::Color color) const;
 };

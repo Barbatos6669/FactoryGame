@@ -6,7 +6,12 @@
 *.o
 *.obj
 
-# Locally installed terrain sheets
+# Purchased top-down art retired from the game; protect the archive and its old paths.
+/source-art/retired-top-down/
 /assets/tilesets/The Ground v1-1.png
 /assets/tilesets/The Ground v1-1 - Bright.png
 /assets/tilesets/The Ground v2-6.png
+
+# Purchased Tiny Warfare pack installed locally
+/assets/mythryl-studio/tiny-warfare/
+tiny-warfare-paid-sprites.zip

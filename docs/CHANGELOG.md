@@ -2,6 +2,45 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-23 - Centralized map edits and brush selection
+
+- `MapEditor` owns brush and tool selection, the active stroke, and undo history. Keyboard shortcuts and palette clicks use the same selection rules. The library returns a stamp when the player confirms a pose.
+- Switching tools finishes the current stroke as one undoable edit. Raise remembers the last terrain brush after placing a rock or flower and keeps the selected row and frame of a library terrain stamp.
+
+## 2026-11-23 - Added undo for map edits
+
+- Ctrl+Z restores a complete erase or paint stroke, including removed base cells, decorations and library stamps. Single-click changes can also be undone in order.
+- Saving keeps undo available. Successfully loading a map begins a fresh history.
+
+## 2026-11-23 - Added a terrain eraser
+
+- Select Erase in the dock or press E. Click or drag to remove one exposed block per cell, including its decoration and any library stamp. Removing the base leaves the cell empty.
+- Right-click still clears just the decoration. Lower still keeps the base block.
+
+## 2026-11-23 - Added drag-to-paint terrain
+
+- Hold the left button in Paint to brush grass, dirt, water, or a library terrain surface across visible cells. Raise, Lower, decorations, and right-click clearing keep their single-click controls.
+- Fast strokes trace the pixels between mouse events and edit each picked cell once. A dense-map check matched the ordinary picker across a 1,000-pixel drag on 10,000 mixed-height columns.
+
+## 2026-11-23 - Added the developer asset library
+
+- Open the library from the dock or with Tab. Search installed visuals, filter categories, inspect frames and select a pose to stamp on the map.
+- Terrain and object stamps can share the exposed block and are saved independently at each height. Earlier single-block and stacked maps still load.
+- Renamed the height tool to Raise while keeping its B shortcut.
+
+## 2026-11-23 - Added stackable isometric terrain
+
+- Added Paint, Stack, and Lower to the palette. A cell can hold up to eight blocks, and each remembers its own terrain and decoration.
+- Picking, hover, grid outlines, and the engineer's feet follow the raised surfaces. The front-right starter column demonstrates three layers.
+- F2 saves stacks from bottom to top. F4 also reads existing grass-only and single-block maps.
+- Independent checks covered both art sets, visible tops and side faces across zoom levels, camera and engineer elevation, and restoring covered decorations after lowering or loading.
+
+## 2026-11-23 - Adopted isometric terrain throughout the editor
+
+- The map opens in isometric view. The five brush previews use the same terrain and objects as the map, including a new original wildflower. The editor dock provides Save, Load, and Grid controls.
+- Tiny Warfare supplies the textured ground, rock, and woodland engineer when installed. Built-in diamonds and objects support map editing without the pack.
+- Isolated runs checked both startup configurations, diamond picking, camera follow, zoom, all eight controls, and loading earlier grass-only and mixed saves.
+
 ## 2026-11-22 - Painted terrain and objects on the same cell
 
 - Each painted cell stores its coordinates, terrain, and optional object in one `Tile`. Six starter cells demonstrate grass, dirt, water, rocks, and the same flowers growing on two different surfaces.
