@@ -231,10 +231,10 @@ const Tile* findTile(const std::vector<Tile>& tiles, sf::Vector2i cell)
     return nullptr;
 }
 
-void paintTile(std::vector<Tile>& tiles, sf::Vector2i cell, Brush brush)
+namespace
 {
-    Tile& tile = getOrCreateTile(tiles, cell);
-    TerrainLayer& surface = tile.layers.back();
+void paintSurface(TerrainLayer& surface, Brush brush)
+{
     switch (brush)
     {
         case Brush::Grass:
@@ -260,20 +260,124 @@ void paintTile(std::vector<Tile>& tiles, sf::Vector2i cell, Brush brush)
     }
 }
 
+void stampSurface(TerrainLayer& surface, AssetPlacement stamp, bool groundSurface)
+{
+    if (groundSurface)
+        surface.groundAsset = std::move(stamp);
+    else
+    {
+        surface.asset = std::move(stamp);
+        surface.object = TileObject::None;
+    }
+}
+
+bool validGroundPaint(Brush brush, const AssetPlacement& stamp)
+{
+    if (!stamp.id.empty())
+        return validPlacement(stamp);
+    return brush == Brush::Grass || brush == Brush::Dirt || brush == Brush::Water;
+}
+
+bool sameGround(const TerrainLayer& a, const TerrainLayer& b)
+{
+    if (a.groundAsset.id.empty() && b.groundAsset.id.empty())
+        return a.terrain == b.terrain;
+    return a.groundAsset == b.groundAsset;
+}
+}
+
+void paintTile(std::vector<Tile>& tiles, sf::Vector2i cell, Brush brush)
+{
+    paintSurface(getOrCreateTile(tiles, cell).layers.back(), brush);
+}
+
+void paintGround(TerrainLayer& surface, Brush brush, const AssetPlacement& groundStamp)
+{
+    if (!groundStamp.id.empty())
+        stampSurface(surface, groundStamp, true);
+    else if (brush != Brush::Rock && brush != Brush::Flower)
+        paintSurface(surface, brush);
+}
+
+std::vector<std::size_t> terrainFillCells(const std::vector<Tile>& tiles, sf::Vector2i seed,
+                                          Brush brush, const AssetPlacement& groundStamp)
+{
+    const Tile* start = findTile(tiles, seed);
+    if (!start || start->layers.empty() || !validGroundPaint(brush, groundStamp))
+        return {};
+    const TerrainLayer& original = start->layers.back();
+    TerrainLayer replacement = original;
+    paintGround(replacement, brush, groundStamp);
+    if (sameGround(original, replacement))
+        return {};
+
+    // Only matching columns can join the patch. Removing each one on discovery also marks it visited.
+    // Use wider coordinates for neighbor lookups at the limits of a saved cell coordinate.
+    std::map<std::pair<long long, long long>, std::size_t> remaining;
+    for (std::size_t index = 0; index < tiles.size(); ++index)
+    {
+        const Tile& tile = tiles[index];
+        if (tile.layers.size() == start->layers.size() && sameGround(original, tile.layers.back()))
+            remaining.emplace(std::make_pair(tile.cell.x, tile.cell.y), index);
+    }
+    std::vector<std::size_t> patch{static_cast<std::size_t>(start - tiles.data())};
+    remaining.erase({seed.x, seed.y});
+    constexpr sf::Vector2i neighbors[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    for (std::size_t next = 0; next < patch.size(); ++next)
+    {
+        const auto cell = tiles[patch[next]].cell;
+        for (const auto offset : neighbors)
+        {
+            const auto neighbor = remaining.find({static_cast<long long>(cell.x) + offset.x,
+                                                  static_cast<long long>(cell.y) + offset.y});
+            if (neighbor != remaining.end())
+            {
+                patch.push_back(neighbor->second);
+                remaining.erase(neighbor);
+            }
+        }
+    }
+    return patch;
+}
+
+bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush brush, AssetPlacement groundStamp)
+{
+    if (bounds.size.x <= 0 || bounds.size.y <= 0 || !validGroundPaint(brush, groundStamp))
+        return false;
+
+    // Preserve existing column order and append only the missing cells, from left to right in each row.
+    const auto width = static_cast<std::size_t>(bounds.size.x);
+    std::vector<bool> occupied(width * bounds.size.y, false);
+    for (Tile& tile : tiles)
+    {
+        if (bounds.contains(tile.cell))
+        {
+            const auto offset = tile.cell - bounds.position;
+            occupied[offset.y * width + offset.x] = true;
+            paintGround(tile.layers.back(), brush, groundStamp);
+        }
+    }
+    for (int y = 0; y < bounds.size.y; ++y)
+    {
+        for (int x = 0; x < bounds.size.x; ++x)
+        {
+            if (!occupied[y * width + x])
+            {
+                tiles.push_back({bounds.position + sf::Vector2i{x, y}});
+                paintGround(tiles.back().layers.back(), brush, groundStamp);
+            }
+        }
+    }
+    return true;
+}
+
 bool placeAsset(std::vector<Tile>& tiles, sf::Vector2i cell, const AssetPlacement& asset, bool groundSurface)
 {
     if (asset.id.empty() || !validPlacement(asset))
         return false;
 
     AssetPlacement placed = asset;
-    TerrainLayer& surface = getOrCreateTile(tiles, cell).layers.back();
-    if (groundSurface)
-        surface.groundAsset = std::move(placed);
-    else
-    {
-        surface.asset = std::move(placed);
-        surface.object = TileObject::None;
-    }
+    stampSurface(getOrCreateTile(tiles, cell).layers.back(), std::move(placed), groundSurface);
     return true;
 }
 

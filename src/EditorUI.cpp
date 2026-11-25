@@ -37,12 +37,14 @@ struct ActionButton
     Key key;
 };
 
-// The first group selects how a click edits terrain; the second group operates on the map.
-constexpr std::array<ActionButton, 8> actions{{
+// Four tool buttons, four map buttons, then the two history controls.
+constexpr std::size_t firstHistoryButton = 8;
+constexpr std::array<ActionButton, 10> actions{{
     {Command::Paint, "P", Key::P}, {Command::Stack, "B", Key::B}, {Command::Lower, "L", Key::L},
     {Command::Erase, "E", Key::E},
     {Command::Save, "F2", Key::F2}, {Command::Load, "F4", Key::F4},
-    {Command::ToggleGrid, "F3", Key::F3}, {Command::ToggleLibrary, "Tab", Key::Tab}
+    {Command::ToggleGrid, "F3", Key::F3}, {Command::ToggleLibrary, "Tab", Key::Tab},
+    {Command::Undo, "Ctrl+Z", Key::Unknown}, {Command::Redo, "Ctrl+Y", Key::Unknown}
 }};
 
 constexpr sf::Color panelColor{24, 31, 38};
@@ -53,6 +55,7 @@ constexpr sf::Color pressedColor{64, 75, 81};
 constexpr sf::Color borderColor{68, 82, 91};
 constexpr sf::Color textColor{242, 245, 241};
 constexpr sf::Color quietColor{180, 194, 201};
+constexpr sf::Color disabledText{139, 151, 158};
 constexpr sf::Color accent{245, 192, 114};
 constexpr sf::Color selectedFill{71, 58, 43};
 
@@ -99,7 +102,8 @@ Layout makeLayout(sf::Vector2u size)
     const bool narrow = width < 435.f;
     const float actionHeight = narrow ? 35.f : layout.stacked ? 26.f : 23.f;
     const float footerHeight = narrow ? 49.f : 37.f;
-    const float height = (layout.stacked ? 82.f + 2.f * actionHeight + 11.f : 140.f) + footerHeight;
+    const float historyHeight = 25.f;
+    const float height = (layout.stacked ? 82.f + 2.f * actionHeight + 11.f + historyHeight + 4.f : 140.f) + footerHeight;
     const float left = std::floor((screen.x - width) / 2.f);
     const float top = std::floor(screen.y - margin - height);
     layout.panel = {{left, top}, {width, height}};
@@ -124,7 +128,7 @@ Layout makeLayout(sf::Vector2u size)
     const float actionTop = layout.stacked ? rowY + 58.f : rowY;
     const float buttonWidth = layout.stacked ? std::floor((innerWidth - groupLabelWidth - 3.f * gap) / 4.f)
                                             : (actionWidth - groupGap) / 2.f;
-    for (int i = 0; i < static_cast<int>(actions.size()); ++i)
+    for (int i = 0; i < static_cast<int>(firstHistoryButton); ++i)
     {
         const int group = i / 4;
         const int slot = i % 4;
@@ -134,6 +138,12 @@ Layout makeLayout(sf::Vector2u size)
         layout.actionCards[i] = {{actionLeft + column * (buttonWidth + columnGap),
                                   actionTop + row * (actionHeight + gap)}, {buttonWidth, actionHeight}};
     }
+    const float historyWidth = layout.stacked ? 2.f * buttonWidth + gap : 96.f;
+    const float historyLeft = layout.stacked ? actionLeft : left + width - padding - 2.f * historyWidth - gap;
+    const float historyTop = layout.stacked ? actionTop + 2.f * (actionHeight + gap) : layout.footerY + 6.f;
+    for (std::size_t i = firstHistoryButton; i < actions.size(); ++i)
+        layout.actionCards[i] = {{historyLeft + (i - firstHistoryButton) * (historyWidth + gap), historyTop},
+                                 {historyWidth, historyHeight}};
     if (layout.scale != std::floor(layout.scale))
     {
         snapToPixels(layout.panel, layout.scale);
@@ -214,11 +224,13 @@ const char* actionName(Command command, bool grid)
         case Command::Load: return "Load";
         case Command::ToggleGrid: return grid ? "Grid on" : "Grid off";
         case Command::ToggleLibrary: return "Library";
+        case Command::Undo: return "Undo";
+        case Command::Redo: return "Redo";
         default: return "";
     }
 }
 
-const char* actionHint(Command command, TerrainTool tool, bool grid)
+const char* actionHint(Command command, TerrainTool tool, bool grid, bool canUndo, bool canRedo)
 {
     switch (command)
     {
@@ -230,6 +242,8 @@ const char* actionHint(Command command, TerrainTool tool, bool grid)
         case Command::Load: return "Load the last saved map";
         case Command::ToggleGrid: return grid ? "Hide grid and diagnostics" : "Show grid and diagnostics";
         case Command::ToggleLibrary: return "Browse the asset library";
+        case Command::Undo: return canUndo ? "Undo the last edit or brush stroke" : "Nothing to undo";
+        case Command::Redo: return canRedo ? "Reapply the last undone edit" : "Nothing to redo";
         default: break;
     }
     switch (tool)
@@ -245,6 +259,8 @@ const char* actionHint(Command command, TerrainTool tool, bool grid)
 
 EditorCommand editorCommandForKey(sf::Keyboard::Key key)
 {
+    if (key == Key::Unknown)
+        return Command::Canvas;
     for (const auto& button : brushes)
         if (button.key == key)
             return button.command;
@@ -252,6 +268,18 @@ EditorCommand editorCommandForKey(sf::Keyboard::Key key)
         if (button.key == key)
             return button.command;
     return Command::Canvas;
+}
+
+EditorCommand editorCommandForKey(const sf::Event::KeyPressed& key)
+{
+    if (key.control && !key.alt && !key.system)
+    {
+        if (key.code == Key::Z)
+            return key.shift ? Command::Redo : Command::Undo;
+        if (key.code == Key::Y && !key.shift)
+            return Command::Redo;
+    }
+    return editorCommandForKey(key.code);
 }
 
 EditorUI::EditorUI(const sf::Font* font) : font(font) {}
@@ -268,7 +296,8 @@ void EditorUI::notify(const std::string& message)
 }
 
 void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush brush, TerrainTool tool,
-                    bool gridVisible, sf::Vector2i mousePixel, bool leftDown, std::string_view activeAssetLabel) const
+                    bool gridVisible, sf::Vector2i mousePixel, bool leftDown, std::string_view activeAssetLabel,
+                    bool canUndo, bool canRedo, std::optional<sf::IntRect> paintArea, bool groundStamp) const
 {
     const Layout layout = makeLayout(target.getSize());
     if (!font || layout.scale <= 0.f)
@@ -289,6 +318,8 @@ void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush bru
     };
     groupHeading("TOOL", layout.actionCards[0]);
     groupHeading("MAP", layout.actionCards[4]);
+    if (layout.stacked)
+        groupHeading("EDIT", layout.actionCards[firstHistoryButton]);
 
     for (std::size_t i = 0; i < brushes.size(); ++i)
     {
@@ -315,12 +346,14 @@ void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush bru
     {
         const ActionButton& button = actions[i];
         const Rect card = layout.actionCards[i];
-        const bool hot = hovered == button.command;
+        const bool disabled = (button.command == Command::Undo && !canUndo) ||
+                              (button.command == Command::Redo && !canRedo);
+        const bool hot = !disabled && hovered == button.command;
         const bool active = (button.command == Command::Paint && tool == TerrainTool::Paint) ||
                             (button.command == Command::Stack && tool == TerrainTool::Stack) ||
                             (button.command == Command::Lower && tool == TerrainTool::Lower) ||
                             (button.command == Command::Erase && tool == TerrainTool::Erase);
-        const auto fill = active ? accent : (hot ? (leftDown ? pressedColor : hoverColor) : cardColor);
+        const auto fill = disabled ? panelColor : active ? accent : (hot ? (leftDown ? pressedColor : hoverColor) : cardColor);
         box(target, card, fill, active ? accent : (hot ? quietColor : borderColor));
         const std::string name = actionName(button.command, gridVisible);
         const float middleY = card.position.y + std::floor(card.size.y / 2.f);
@@ -332,18 +365,30 @@ void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush bru
             continue;
         }
         label(target, *font, name, card.size.x < 90.f ? 14 : 15, {card.position.x + 6.f, middleY},
-              active ? panelColor : textColor, false, active);
-        const Rect keycap{{card.position.x + card.size.x - 27.f, middleY - 9.f}, {22.f, 18.f}};
+              disabled ? disabledText : active ? panelColor : textColor, false, active);
+        const float keyWidth = i >= firstHistoryButton ? 40.f : 22.f;
+        const Rect keycap{{card.position.x + card.size.x - keyWidth - 5.f, middleY - 9.f}, {keyWidth, 18.f}};
         box(target, keycap, panelColor, borderColor);
-        label(target, *font, button.shortcut, 11, {keycap.position.x + 11.f, middleY}, quietColor, true);
+        label(target, *font, button.shortcut, 11, {keycap.position.x + keyWidth / 2.f, middleY},
+              disabled ? disabledText : quietColor, true);
     }
 
     const float padding = layout.brushCards[0].position.x - layout.panel.position.x;
     const float textX = layout.panel.position.x + padding;
     box(target, {{textX, layout.footerY}, {layout.panel.size.x - 2.f * padding, 1.f}}, borderColor);
-    const float availableWidth = layout.panel.size.x - 2.f * padding;
+    const float availableWidth = layout.stacked ? layout.panel.size.x - 2.f * padding :
+        layout.actionCards[firstHistoryButton].position.x - textX - 6.f;
+    if (paintArea)
+    {
+        const auto size = paintArea->size;
+        label(target, *font, std::to_string(size.x) + " x " + std::to_string(size.y) + " cells", 14,
+              {textX, layout.footerY + 10.f}, accent, false, true);
+        label(target, *font, "Release to paint   /   Esc to cancel", 13, {textX, layout.footerY + 26.f}, textColor);
+        target.setView(oldView);
+        return;
+    }
     const bool showingFeedback = !feedback.empty() && feedbackClock.getElapsedTime().asSeconds() < 3.f;
-    std::string footer = showingFeedback ? feedback : actionHint(hovered, tool, gridVisible);
+    std::string footer = showingFeedback ? feedback : actionHint(hovered, tool, gridVisible, canUndo, canRedo);
     const bool eraseHint = !showingFeedback && (hovered == Command::Erase ||
         (tool == TerrainTool::Erase && (hovered == Command::Canvas || hovered == Command::Panel)));
     if (eraseHint)
@@ -366,7 +411,8 @@ void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush bru
         target.setView(oldView);
         return;
     }
-    if (!showingFeedback && tool != TerrainTool::Erase && !activeAssetLabel.empty())
+    const bool overHistory = hovered == Command::Undo || hovered == Command::Redo;
+    if (!showingFeedback && !overHistory && tool != TerrainTool::Erase && !activeAssetLabel.empty())
         footer = "Stamp   " + std::string(activeAssetLabel);
     else if (!showingFeedback && hovered == Command::ToggleLibrary)
         footer = "Browse the asset library";
@@ -380,6 +426,21 @@ void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush bru
         }
         footer += "...";
     }
-    label(target, *font, footer, 13, {textX, layout.footerY + 17.f}, showingFeedback || (tool != TerrainTool::Erase && !activeAssetLabel.empty()) ? accent : quietColor);
+    const bool showPickHint = !showingFeedback && tool == TerrainTool::Paint &&
+        (hovered == Command::Canvas || hovered == Command::Panel || hovered == Command::Paint);
+    const bool terrainPaint = activeAssetLabel.empty() ? brush != Brush::Rock && brush != Brush::Flower : groundStamp;
+    const float footerY = layout.footerY + (showPickHint ? 10.f : 17.f);
+    label(target, *font, footer, 13, {textX, footerY}, showingFeedback || (tool != TerrainTool::Erase && !activeAssetLabel.empty()) ? accent : quietColor);
+    if (showPickHint)
+    {
+        const bool narrow = layout.panel.size.x < 435.f;
+        const char* pickHint = "I pick   /   Shift+I pick ground";
+        std::string hint = terrainPaint ? "F fill   /   Shift+drag rectangle" : pickHint;
+        if (terrainPaint && narrow)
+            label(target, *font, pickHint, 13, {textX, layout.footerY + 40.f}, quietColor);
+        else if (terrainPaint)
+            hint += std::string("   /   ") + pickHint;
+        label(target, *font, hint, 13, {textX, layout.footerY + 26.f}, quietColor);
+    }
     target.setView(oldView);
 }

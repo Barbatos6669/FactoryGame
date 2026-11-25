@@ -9,9 +9,6 @@
 
 namespace
 {
-// Front-corner pixel from the pack's sprites.json. The entire 32 x 27 tile includes the side faces.
-constexpr sf::Vector2f objectAnchor{17.f, 33.f};
-
 // A 32 x 16 walkable diamond sits above nine pixels of visible earth.
 sf::Image makeGround(sf::Color top, sf::Color left, sf::Color right)
 {
@@ -74,17 +71,18 @@ IsometricArt::IsometricArt() :
     groundImages{makeGround({99, 153, 93}, {65, 104, 74}, {49, 84, 63}),
                  makeGround({172, 127, 83}, {125, 88, 62}, {97, 69, 55}),
                  makeGround({74, 160, 179}, {46, 119, 147}, {40, 97, 128})},
-    grass(groundImages[0]), dirt(groundImages[1]), water(groundImages[2]),
-    rock(makeObject({10, 21}, {
+    rockImage(makeObject({10, 21}, {
         "....hhhhh....", "...hhrrrrs...", "..hhrrrrrss..", ".hrrrrrrssss.",
         ".rrrrrssssss.", "rrrrssssssrrs", ".ssssssrrrsss", "...sssssssss."
     })),
-    flower(makeObject({10, 16}, {
+    flowerImage(makeObject({10, 16}, {
         "...pp........", "..pppp.......", ".ppypp.......", "..ppp.....v..",
         "...gg....vvv.", "....g...vvyvv", "....g....vvv.", ".ll.g.....g..",
         "..llgg....g..", "....lg...gl..", ".....g..glll.", ".....gggg....",
         "......gg....."
-    }))
+    })),
+    grass(groundImages[0]), dirt(groundImages[1]), water(groundImages[2]),
+    rock(rockImage), flower(flowerImage)
 {
 }
 
@@ -97,11 +95,23 @@ bool IsometricArt::groundPixelOpaque(TerrainType terrain, sf::Vector2i texel) co
     return groundImages[index].getPixel(sf::Vector2u(texel)).a != 0;
 }
 
+const sf::Image* IsometricArt::objectImage(TileObject object) const
+{
+    switch (object)
+    {
+        case TileObject::Rock: return &rockImage;
+        case TileObject::Flower: return &flowerImage;
+        case TileObject::None: return nullptr;
+    }
+    return nullptr;
+}
+
 bool loadIsometricArt(IsometricArt& art, const std::filesystem::path& packFolder)
 {
     const auto ground = packFolder / "ground" / "temperate";
     std::error_code error;
     std::array<sf::Image, 3> images;
+    sf::Image rockImage;
     sf::Texture grass, dirt, water, rock;
     const auto loadGround = [&](std::size_t index, const std::filesystem::path& file, sf::Texture& texture) {
         auto& image = images[index];
@@ -112,12 +122,13 @@ bool loadIsometricArt(IsometricArt& art, const std::filesystem::path& packFolder
         !loadGround(0, "grass_mud/grass_1.png", grass) ||
         !loadGround(1, "grass_mud/mud_1.png", dirt) ||
         !loadGround(2, "water_1.png", water) ||
-        !rock.loadFromFile(ground / "nature" / "rock_small.png"))
+        !rockImage.loadFromFile(ground / "nature" / "rock_small.png") || !rock.loadFromImage(rockImage))
     {
         art = IsometricArt{};
         return false;
     }
     art.groundImages = std::move(images);
+    art.rockImage = std::move(rockImage);
     art.grass = std::move(grass);
     art.dirt = std::move(dirt);
     art.water = std::move(water);

@@ -33,17 +33,23 @@ Every walking update moves the engineer first, then sets the view center to his 
 
 `runGame()` polls for a finished catalog, handles events, updates the engineer and camera, picks the visible cell under the mouse, updates diagnostics, and draws. While the library is open, its controls receive mouse and keyboard input and walking and camera panning pause. A catalog is requested when the player opens the library or loads a map with asset placements.
 
-`handleEvents()` checks the palette and diagnostics before passing a left map click to `MapEditor::pressCell()`. Follow the drag through `dragTo()`. On release, the window sends the final pointer position and calls `finishEdit()`. A right click calls `clearDecoration()`, which finishes its own edit. Ctrl+Z calls `undoEdit()`. Buttons and their keyboard shortcuts share `applyEditorCommand()`. Both panels use screen pixels.
+`handleEvents()` checks the palette and diagnostics before passing a left map click to `MapEditor::pressCell()`. Follow the drag through `dragTo()`. On release, the window sends the final pointer position and calls `finishEdit()`. A right click calls `clearDecoration()`, which finishes its own edit. The Undo and Redo buttons and their shortcuts reach `undoEdit()` and `redoEdit()` through `applyEditorCommand()`. Both panels use screen pixels.
 
 ## Isometric view
 
-Click and hover use the same lookup. When stacks overlap, the foremost painted column under the pointer wins. The exposed side faces also count. Over empty space, the inverse projection gives the cell on the base plane.
+Click, hover, and the eyedropper use the same lookup. When stacks overlap, the foremost painted column under the pointer wins. The exposed side faces also count. Over empty space, the inverse projection gives the cell on the base plane.
+
+`MapEditor::sampleCell()` reads the exposed block in the picked column. It selects the decoration if present and the terrain otherwise. Holding Shift always picks the terrain. Sampling changes the active brush and leaves the map and its edit history intact.
 
 Holding the left button with a terrain brush or Erase starts a stroke. Movement and release trace the screen pixels between reported mouse positions. A temporary index groups nearby columns for these lookups and adds new cells as they are painted. The lookup uses the same sprite opacity and depth rules as a click. Each visible cell is edited once per stroke.
 
+Holding Shift at the start of a terrain paint drag selects a rectangle. Its two corners are picked map cells, so a drag in either direction includes both endpoints. The renderer previews the footprint while the map still holds its original tiles. Releasing over the map applies the brush to the exposed surfaces and records one edit. Escape, losing focus, or moving off the canvas discards the preview.
+
+Pressing F over a painted cell calls `MapEditor::fillSurface()`. From that cell, fill visits edge neighbors at the same stack height with the same exposed ground. Library ground matches by asset ID, row, and frame. The operation replaces only the exposed ground across the patch and records every changed cell in one history entry.
+
 An Erase click immediately removes the exposed layer, including the base if it is the last block. If the pointer moves, the stroke picks against the columns as they looked at the press. A return pass over a freshly exposed tile therefore leaves it alone until the next press. Erased base cells have no save row. An empty save represents an empty map.
 
-`EditHistory` remembers a cell's original layers the first time an edit touches it. An Erase gesture also remembers the starting order of the coordinates so undo can return removed columns to their original save rows. Releasing or interrupting a stroke finishes one history entry. Other map edits finish after each click. Ctrl+Z restores the previous edit in memory. F2 writes the current map, and a successful F4 clears its undo history.
+`EditHistory` remembers a cell's original layers the first time an edit touches it. An Erase gesture also remembers the starting order of the coordinates so undo can return removed columns to their original save rows. Releasing or interrupting a stroke finishes one history entry. Other map edits finish after each click. Undo restores the affected cells. Redo reapplies the same edit, even after the player changes brushes. A new edit that changes a cell clears the redo branch. Saving keeps both directions of history, and successfully loading a map clears both.
 
 History keeps up to 32 edits with a target of 32 MiB. It drops older edits first and keeps the newest gesture whole, even if that gesture alone exceeds the target.
 

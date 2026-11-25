@@ -12,18 +12,21 @@
 inline constexpr float terrainLayerHeightRatio = 0.25f;
 inline constexpr sf::Vector2f terrainFrontAnchor{16.f, 17.f};
 inline constexpr sf::Vector2i terrainFrameSize{32, 27};
+inline constexpr sf::Vector2f objectAnchor{17.f, 33.f};
 
 struct IsometricArt
 {
 private:
     // Kept in system memory for pixel-accurate picking without a GPU readback.
     std::array<sf::Image, 3> groundImages;
+    sf::Image rockImage, flowerImage;
     friend bool loadIsometricArt(IsometricArt&, const std::filesystem::path&);
 
 public:
     /// Start with original pixel art so every brush works before the optional pack is loaded.
     IsometricArt();
     bool groundPixelOpaque(TerrainType terrain, sf::Vector2i texel) const;
+    const sf::Image* objectImage(TileObject object) const;
     sf::Texture grass;
     sf::Texture dirt;
     sf::Texture water;

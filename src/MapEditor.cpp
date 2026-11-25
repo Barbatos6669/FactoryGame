@@ -57,10 +57,120 @@ void MapEditor::selectStamp(AssetPlacement stamp)
 
 void MapEditor::cancelSelection()
 {
+    if (rectangle)
+    {
+        finishEdit();
+        return;
+    }
     finishEdit();
     selectedAsset = {};
     if (tool == TerrainTool::Erase)
         tool = TerrainTool::Paint;
+}
+
+void MapEditor::sampleCell(sf::Vector2i cell, bool groundOnly, EditorUI& ui, const AssetLibrary& library)
+{
+    const Tile* tile = findTile(tiles, cell);
+    if (!tile || tile->layers.empty())
+    {
+        ui.notify("Nothing to pick here");
+        return;
+    }
+
+    const TerrainLayer& surface = tile->layers.back();
+    const bool pickGround = groundOnly || (surface.object == TileObject::None && surface.asset.id.empty());
+    const AssetPlacement& stamp = pickGround ? surface.groundAsset : surface.asset;
+    if (!stamp.id.empty())
+    {
+        const AssetEntry* entry = library.find(stamp, pickGround);
+        if (!entry)
+        {
+            ui.notify(library.indexing() ? "Library is loading. Try picking again." : "This stamp is unavailable");
+            return;
+        }
+        selectStamp(stamp);
+        ui.notify("Picked " + entry->name);
+        return;
+    }
+
+    const auto pickBrush = [&](Brush choice, const char* name) {
+        selectBrush(choice);
+        tool = TerrainTool::Paint;
+        ui.notify(std::string("Picked ") + name);
+    };
+    if (pickGround)
+    {
+        switch (surface.terrain)
+        {
+            case TerrainType::Grass: pickBrush(Brush::Grass, "Grass"); break;
+            case TerrainType::Dirt:  pickBrush(Brush::Dirt, "Dirt"); break;
+            case TerrainType::Water: pickBrush(Brush::Water, "Water"); break;
+        }
+    }
+    else if (surface.object == TileObject::Rock)
+        pickBrush(Brush::Rock, "Rock");
+    else if (surface.object == TileObject::Flower)
+        pickBrush(Brush::Flower, "Flower");
+}
+
+std::size_t MapEditor::fillSurface(sf::Vector2i cell, const AssetLibrary& library)
+{
+    finishEdit();
+    if (!paintsSurface(library))
+        return 0;
+    const auto patch = terrainFillCells(tiles, cell, brush, selectedAsset);
+    if (patch.empty())
+        return 0;
+
+    for (const auto index : patch)
+    {
+        Tile& tile = tiles[index];
+        history.rememberColumn(tile, index);
+        paintGround(tile.layers.back(), brush, selectedAsset);
+    }
+    history.finish(tiles);
+    return patch.size();
+}
+
+bool MapEditor::beginRectangle(sf::Vector2i cell, const sf::View& view, const AssetLibrary& library)
+{
+    if (!paintsSurface(library))
+        return false;
+    finishEdit();
+    rectangle = RectanglePreview{cell, cell, view.getCenter(), view.getSize()};
+    return true;
+}
+
+void MapEditor::updateRectangle(sf::Vector2i cell)
+{
+    if (rectangle)
+        rectangle->end = cell;
+}
+
+std::optional<sf::IntRect> MapEditor::rectangleBounds() const
+{
+    if (!rectangle)
+        return std::nullopt;
+    const auto first = rectangle->anchor;
+    const auto last = rectangle->end;
+    return sf::IntRect{{std::min(first.x, last.x), std::min(first.y, last.y)},
+                       {std::abs(last.x - first.x) + 1, std::abs(last.y - first.y) + 1}};
+}
+
+void MapEditor::commitRectangle(EditorUI& ui, AssetLibrary& library)
+{
+    const auto bounds = rectangleBounds();
+    rectangle.reset();
+    if (!bounds || !paintsSurface(library))
+        return;
+
+    history.rememberRectangle(tiles, *bounds);
+    const bool painted = paintTerrainRectangle(tiles, *bounds, brush, selectedAsset);
+    history.finish(tiles);
+    if (painted)
+        ui.notify("Painted " + std::to_string(bounds->size.x) + " x " + std::to_string(bounds->size.y));
+    else
+        ui.notify("Could not paint this terrain stamp");
 }
 
 MapEditor::TerrainStroke::TerrainStroke(sf::Vector2i start, sf::Vector2i cell, const sf::View& view)
@@ -70,13 +180,13 @@ MapEditor::TerrainStroke::TerrainStroke(sf::Vector2i start, sf::Vector2i cell, c
 }
 
 void MapEditor::TerrainStroke::preparePicker(const Grid& grid, const std::vector<Tile>& tiles,
-                                             AssetLibrary& library, bool erasing)
+                                             const IsometricArt& art, AssetLibrary& library, bool erasing)
 {
     if (picker)
         return;
     if (!erasing)
     {
-        picker.emplace(grid, tiles, &library);
+        picker.emplace(grid, tiles, art, &library);
         return;
     }
 
@@ -93,7 +203,7 @@ void MapEditor::TerrainStroke::preparePicker(const Grid& grid, const std::vector
             *found = std::move(*firstErased);
         firstErased.reset();
     }
-    picker.emplace(grid, original, &library);
+    picker.emplace(grid, original, art, &library);
 }
 
 void MapEditor::pressCell(sf::Vector2i cell, sf::Vector2i pixel, const sf::View& view,
@@ -184,7 +294,7 @@ void MapEditor::dragTo(sf::Vector2i end, const sf::RenderTarget& target, bool fo
     if (active.pixel == end)
         return;
     const bool erasing = tool == TerrainTool::Erase;
-    active.preparePicker(grid, tiles, library, erasing);
+    active.preparePicker(grid, tiles, art, library, erasing);
     std::set<std::pair<int, int>> cellsToErase;
 
     // SFML may report a long move in one event. Visit each pixel on that screen segment in order.
@@ -201,7 +311,7 @@ void MapEditor::dragTo(sf::Vector2i end, const sf::RenderTarget& target, bool fo
                                  static_cast<int>(std::round(start.y + t * dy))};
         std::optional<sf::Vector2i> cell;
         if (insideWindow(pixel, size) && editorHit(ui, debug, size, pixel) == EditorCommand::Canvas)
-            cell = active.picker->pick(projectedMousePoint(target, pixel), art);
+            cell = active.picker->pick(projectedMousePoint(target, pixel));
         if (!cell)
         {
             crossedBoundary = true;
@@ -236,6 +346,7 @@ void MapEditor::dragTo(sf::Vector2i end, const sf::RenderTarget& target, bool fo
 
 void MapEditor::finishEdit()
 {
+    rectangle.reset();
     // A release and an interrupted stroke both finish a single undoable map edit.
     if (!stroke)
         return;
@@ -245,14 +356,23 @@ void MapEditor::finishEdit()
 
 void MapEditor::finishIfCameraMoved(const sf::View& view)
 {
-    if (stroke && view.getCenter() != stroke->viewCenter)
+    if ((stroke && view.getCenter() != stroke->viewCenter) ||
+        (rectangle && (view.getCenter() != rectangle->viewCenter || view.getSize() != rectangle->viewSize)))
         finishEdit();
 }
 
 bool MapEditor::undoEdit()
 {
+    rectangle.reset();
     stroke.reset();
-    return history.undo(tiles); // Also finishes an edit when Ctrl+Z is pressed while dragging.
+    return history.undo(tiles);
+}
+
+bool MapEditor::redoEdit()
+{
+    rectangle.reset();
+    stroke.reset();
+    return history.redo(tiles);
 }
 
 bool MapEditor::loadMap()

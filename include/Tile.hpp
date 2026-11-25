@@ -1,6 +1,8 @@
 #pragma once
 
+#include <SFML/Graphics/Rect.hpp>
 #include <SFML/System/Vector2.hpp>
+#include <cstddef>
 #include <filesystem>
 #include <set>
 #include <string>
@@ -15,6 +17,11 @@ struct AssetPlacement
     std::string id;
     int row = 0;
     int frame = 0;
+
+    bool operator==(const AssetPlacement& other) const
+    {
+        return id == other.id && row == other.row && frame == other.frame;
+    }
 };
 
 struct TerrainLayer
@@ -39,6 +46,13 @@ enum class Brush { Grass, Dirt, Water, Rock, Flower };
 std::vector<Tile> makeSampleTiles(int gridSize);
 const Tile* findTile(const std::vector<Tile>& tiles, sf::Vector2i cell);
 void paintTile(std::vector<Tile>& tiles, sf::Vector2i cell, Brush brush);
+/// Apply a terrain brush or a ground stamp to one surface, preserving its decoration.
+void paintGround(TerrainLayer& surface, Brush brush, const AssetPlacement& groundStamp);
+/// Indices to repaint in one connected, same-height patch. An unchanged or empty seed yields no indices.
+std::vector<std::size_t> terrainFillCells(const std::vector<Tile>& tiles, sf::Vector2i seed,
+                                          Brush brush, const AssetPlacement& groundStamp);
+/// Paint the exposed surfaces. A nonempty ground stamp supplies the artwork in place of a terrain brush.
+bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush brush, AssetPlacement groundStamp);
 bool placeAsset(std::vector<Tile>& tiles, sf::Vector2i cell, const AssetPlacement& asset, bool groundSurface = false);
 void clearTileObject(std::vector<Tile>& tiles, sf::Vector2i cell);
 

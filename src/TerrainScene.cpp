@@ -4,6 +4,7 @@
 #include "Grid.hpp"
 #include "IsometricArt.hpp"
 #include "Projection.hpp"
+#include <SFML/Graphics/VertexArray.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -40,6 +41,67 @@ float terrainElevationAt(const Grid& grid, const std::vector<Tile>& tiles, sf::V
 
 namespace
 {
+sf::FloatRect objectBounds(const sf::Image& image, sf::Vector2f top, float scale)
+{
+    return {top - objectAnchor * scale, sf::Vector2f(image.getSize()) * scale};
+}
+
+struct PaintFootprint
+{
+    sf::VertexArray faces{sf::PrimitiveType::Triangles};
+    sf::VertexArray edges{sf::PrimitiveType::Lines};
+
+    void addCell(sf::Vector2i cell, sf::Vector2f front, float side, const sf::IntRect& area)
+    {
+        constexpr sf::Color fill{255, 198, 98, 78};
+        constexpr sf::Color border{255, 222, 156};
+        const auto back = front - sf::Vector2f{0.f, side / 2.f};
+        const auto left = front - sf::Vector2f{side / 2.f, side / 4.f};
+        const auto right = front + sf::Vector2f{side / 2.f, -side / 4.f};
+        for (const auto point : {back, right, front, back, front, left})
+            faces.append({point, fill});
+
+        const auto edge = [&](sf::Vector2f from, sf::Vector2f to) {
+            edges.append({from, border});
+            edges.append({to, border});
+        };
+        const auto end = area.position + area.size;
+        if (cell.x == area.position.x) edge(left, back);
+        if (cell.y == area.position.y) edge(back, right);
+        if (cell.x + 1 == end.x) edge(right, front);
+        if (cell.y + 1 == end.y) edge(front, left);
+    }
+
+    void drawAndClear(sf::RenderTarget& target)
+    {
+        if (faces.getVertexCount()) target.draw(faces);
+        if (edges.getVertexCount()) target.draw(edges);
+        faces.clear();
+        edges.clear();
+    }
+};
+
+// Walk the rectangle on the same diagonals as the sorted columns, skipping occupied cells.
+std::vector<sf::Vector2i> emptyPaintCells(const sf::IntRect& area, const std::vector<const Tile*>& visible,
+                                         const sf::FloatRect& bounds, float side)
+{
+    std::vector<sf::Vector2i> empty;
+    auto occupied = visible.begin();
+    for (int diagonal = 0; diagonal < area.size.x + area.size.y - 1; ++diagonal)
+    {
+        const int firstX = std::max(0, diagonal - area.size.y + 1);
+        const int lastX = std::min(area.size.x - 1, diagonal);
+        for (int x = firstX; x <= lastX; ++x)
+        {
+            const sf::Vector2i cell = area.position + sf::Vector2i{x, diagonal - x};
+            while (occupied != visible.end() && behind((*occupied)->cell, cell)) ++occupied;
+            if ((occupied == visible.end() || (*occupied)->cell != cell) && bounds.contains(baseFront(cell, side)))
+                empty.push_back(cell);
+        }
+    }
+    return empty;
+}
+
 void considerColumn(const Grid& grid, const Tile& tile, sf::Vector2f projectedPoint,
                     const IsometricArt& art, AssetLibrary* library, std::optional<sf::Vector2i>& picked)
 {
@@ -51,13 +113,28 @@ void considerColumn(const Grid& grid, const Tile& tile, sf::Vector2f projectedPo
     if (picked && !behind(*picked, tile.cell))
         return;
     const auto base = baseFront(tile.cell, side);
-    const auto& decoration = tile.layers.back().asset;
+    const float elevation = columnElevation(tile, side);
+    const auto top = base - sf::Vector2f{0.f, elevation};
+    const auto& surface = tile.layers.back();
+    const auto& decoration = surface.asset;
     if (library && !decoration.id.empty())
     {
         if (const auto* entry = library->find(decoration, false))
         {
-            const auto top = base - sf::Vector2f{0.f, columnElevation(tile, side)};
             if (library->art.hitWorld(*entry, decoration, top, scale, projectedPoint).value_or(false))
+            {
+                picked = tile.cell;
+                return;
+            }
+        }
+    }
+    else if (const sf::Image* image = art.objectImage(surface.object))
+    {
+        const auto bounds = objectBounds(*image, top, scale);
+        const auto texel = (projectedPoint - bounds.position) / scale;
+        if (sf::FloatRect({0.f, 0.f}, sf::Vector2f(image->getSize())).contains(texel))
+        {
+            if (image->getPixel(sf::Vector2u(texel)).a != 0)
             {
                 picked = tile.cell;
                 return;
@@ -66,7 +143,7 @@ void considerColumn(const Grid& grid, const Tile& tile, sf::Vector2f projectedPo
     }
     const auto baseTexel = (projectedPoint - base) / scale + terrainFrontAnchor;
     if (baseTexel.x < 0.f || baseTexel.x >= terrainFrameSize.x ||
-        baseTexel.y >= terrainFrameSize.y || baseTexel.y < -columnElevation(tile, side) / scale)
+        baseTexel.y >= terrainFrameSize.y || baseTexel.y < -elevation / scale)
         return;
 
     // A transparent edge can expose another block. Sample only the frames under the pointer.
@@ -118,8 +195,9 @@ std::optional<sf::Vector2i> pickTerrainCell(const Grid& grid, const std::vector<
     return pickedOrBase(grid, picked, projectedPoint);
 }
 
-TerrainStrokePicker::TerrainStrokePicker(const Grid& map, const std::vector<Tile>& cells, AssetLibrary* assets)
-    : grid(map), tiles(cells), library(assets), regionSize(std::max(1.f, 2.f * map.cellSize))
+TerrainStrokePicker::TerrainStrokePicker(const Grid& map, const std::vector<Tile>& cells, const IsometricArt& art,
+                                         AssetLibrary* assets)
+    : grid(map), tiles(cells), art(art), library(assets), regionSize(std::max(1.f, 2.f * map.cellSize))
 {
     for (std::size_t i = 0; i < tiles.size(); ++i)
         includeTile(i);
@@ -142,16 +220,21 @@ void TerrainStrokePicker::includeTile(std::size_t index)
     const sf::Vector2f top = base - sf::Vector2f{0.f, columnElevation(tile, side)};
     sf::Vector2f first = top - terrainFrontAnchor * scale;
     sf::Vector2f last = base + (sf::Vector2f(terrainFrameSize) - terrainFrontAnchor) * scale;
-    const auto& item = tile.layers.back().asset;
+    const auto& surface = tile.layers.back();
+    const auto& item = surface.asset;
+    std::optional<sf::FloatRect> sprite;
     if (library && !item.id.empty())
     {
         if (const auto* entry = library->find(item, false))
-        {
-            const auto sprite = library->art.worldBounds(*entry, item.row, top, scale);
-            first = {std::min(first.x, sprite.position.x), std::min(first.y, sprite.position.y)};
-            last = {std::max(last.x, sprite.position.x + sprite.size.x),
-                    std::max(last.y, sprite.position.y + sprite.size.y)};
-        }
+            sprite = library->art.worldBounds(*entry, item.row, top, scale);
+    }
+    else if (const sf::Image* image = art.objectImage(surface.object))
+        sprite = objectBounds(*image, top, scale);
+    if (sprite)
+    {
+        first = {std::min(first.x, sprite->position.x), std::min(first.y, sprite->position.y)};
+        last = {std::max(last.x, sprite->position.x + sprite->size.x),
+                std::max(last.y, sprite->position.y + sprite->size.y)};
     }
     const auto [left, back] = regionAt(first);
     const auto [right, front] = regionAt(last);
@@ -160,7 +243,7 @@ void TerrainStrokePicker::includeTile(std::size_t index)
             regions[{x, y}].push_back(index); // Indices survive vector growth as the stroke paints new cells.
 }
 
-std::optional<sf::Vector2i> TerrainStrokePicker::pick(sf::Vector2f point, const IsometricArt& art) const
+std::optional<sf::Vector2i> TerrainStrokePicker::pick(sf::Vector2f point) const
 {
     std::optional<sf::Vector2i> picked;
     const auto region = regions.find(regionAt(point));
@@ -173,7 +256,7 @@ std::optional<sf::Vector2i> TerrainStrokePicker::pick(sf::Vector2f point, const 
 void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vector<Tile>& tiles,
                       const IsometricArt& art, const Engineer* engineer, bool showGrid,
                       std::optional<sf::Vector2i> hoveredCell, AssetLibrary* library, const AssetPlacement* preview,
-                      bool previewRaised)
+                      bool previewRaised, std::optional<sf::IntRect> paintArea)
 {
     const float side = static_cast<float>(grid.cellSize);
     const float scale = side / 32.f;
@@ -205,7 +288,7 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
 
     if (showGrid)
         grid.draw(target);
-    if (hoveredCell && !findTile(tiles, *hoveredCell))
+    if (!paintArea && hoveredCell && !findTile(tiles, *hoveredCell))
         grid.drawCellOutline(target, *hoveredCell, 0.f, sf::Color::Yellow);
 
     // Insert the engineer at his own cell, so columns in front can hide him.
@@ -213,8 +296,27 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
     const auto feetCell = grid.worldToCell(feet);
     const float feetHeight = engineer ? terrainElevationAt(grid, tiles, feet) : 0.f;
     bool engineerPending = engineer != nullptr;
+    PaintFootprint footprint;
+    const auto empty = paintArea ? emptyPaintCells(*paintArea, visible, bounds, side) : std::vector<sf::Vector2i>{};
+    auto nextEmpty = empty.begin();
+    const auto drawEmptyUntil = [&](const Tile* nextColumn) {
+        while (nextEmpty != empty.end() && (!nextColumn || behind(*nextEmpty, nextColumn->cell)))
+        {
+            if (engineerPending && behind(feetCell, *nextEmpty))
+            {
+                footprint.drawAndClear(target);
+                engineer->draw(target, feetHeight);
+                engineerPending = false;
+            }
+            footprint.addCell(*nextEmpty, baseFront(*nextEmpty, side), side, *paintArea);
+            ++nextEmpty;
+        }
+        footprint.drawAndClear(target);
+    };
     for (const Tile* tile : visible)
     {
+        if (nextEmpty != empty.end())
+            drawEmptyUntil(tile);
         if (engineerPending && behind(feetCell, tile->cell))
         {
             engineer->draw(target, feetHeight);
@@ -241,10 +343,16 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
         }
         const float elevation = columnElevation(*tile, side);
         const sf::Vector2f top = base - sf::Vector2f{0.f, elevation};
-        if (hoveredCell == tile->cell)
+        if (!paintArea && hoveredCell == tile->cell)
             grid.drawCellOutline(target, tile->cell, elevation, sf::Color::Yellow);
         else if (showGrid)
             grid.drawCellOutline(target, tile->cell, elevation, sf::Color::White);
+
+        if (paintArea && paintArea->contains(tile->cell))
+        {
+            footprint.addCell(tile->cell, top, side, *paintArea);
+            footprint.drawAndClear(target);
+        }
 
         // Within the same cell, compare the engineer's feet to the decoration's ground contact.
         if (engineerPending && feetCell == tile->cell && mapToView(feet).y < base.y - side / 4.f)
@@ -270,9 +378,11 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
         else
             drawIsometricObject(target, art, surface.object, top, scale);
     }
+    if (nextEmpty != empty.end())
+        drawEmptyUntil(nullptr);
     if (engineerPending)
         engineer->draw(target, feetHeight);
-    if (library && preview && hoveredCell && !preview->id.empty())
+    if (!paintArea && library && preview && hoveredCell && !preview->id.empty())
     {
         const auto* entry = library->index().find(preview->id);
         if (entry && entry->placeable)

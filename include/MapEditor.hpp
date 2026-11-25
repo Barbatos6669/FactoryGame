@@ -30,7 +30,16 @@ public:
     void selectTool(TerrainTool choice, const AssetLibrary& library);
     void selectStamp(AssetPlacement stamp);
     void cancelSelection();
+    /// Pick a Paint brush from the exposed layer. groundOnly skips its decoration.
+    void sampleCell(sf::Vector2i cell, bool groundOnly, EditorUI& ui, const AssetLibrary& library);
+    bool paintsSurface(const AssetLibrary& library) const;
+    /// Repaint the connected patch under the cursor and return the number of changed cells.
+    std::size_t fillSurface(sf::Vector2i cell, const AssetLibrary& library);
 
+    bool beginRectangle(sf::Vector2i cell, const sf::View& view, const AssetLibrary& library);
+    void updateRectangle(sf::Vector2i cell);
+    std::optional<sf::IntRect> rectangleBounds() const;
+    void commitRectangle(EditorUI& ui, AssetLibrary& library);
     void pressCell(sf::Vector2i cell, sf::Vector2i pixel, const sf::View& view, EditorUI& ui, AssetLibrary& library);
     void clearDecoration(sf::Vector2i cell);
     void dragTo(sf::Vector2i end, const sf::RenderTarget& target, bool focused, const Grid& grid,
@@ -38,14 +47,26 @@ public:
     void finishEdit();
     void finishIfCameraMoved(const sf::View& view);
     bool isDragging() const { return stroke.has_value(); }
+    bool canUndo() const { return history.canUndo(); }
+    bool canRedo() const { return history.canRedo(); }
     bool undoEdit();
+    bool redoEdit();
     bool loadMap();
 
 private:
+    struct RectanglePreview
+    {
+        sf::Vector2i anchor;
+        sf::Vector2i end;
+        sf::Vector2f viewCenter;
+        sf::Vector2f viewSize;
+    };
+
     struct TerrainStroke
     {
         TerrainStroke(sf::Vector2i pixel, sf::Vector2i cell, const sf::View& view);
-        void preparePicker(const Grid& grid, const std::vector<Tile>& tiles, AssetLibrary& library, bool erasing);
+        void preparePicker(const Grid& grid, const std::vector<Tile>& tiles, const IsometricArt& art,
+                           AssetLibrary& library, bool erasing);
         sf::Vector2i pixel;
         sf::Vector2i lastCell;
         sf::Vector2f viewCenter;
@@ -56,7 +77,6 @@ private:
         std::optional<TerrainStrokePicker> picker;
     };
 
-    bool paintsSurface(const AssetLibrary& library) const;
     void editCell(sf::Vector2i cell, EditorUI& ui, AssetLibrary& library);
     Brush brush = Brush::Grass;
     Brush lastGround = Brush::Grass;
@@ -64,6 +84,7 @@ private:
     AssetPlacement selectedAsset{};
     std::vector<Tile> tiles;
     std::optional<TerrainStroke> stroke;
+    std::optional<RectanglePreview> rectangle;
     EditHistory history;
 };
 

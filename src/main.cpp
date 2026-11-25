@@ -30,20 +30,61 @@
 #include "TerrainScene.hpp"
 #include "Tile.hpp"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
-
-constexpr unsigned int WINDOW_WIDTH = 1920;  ///< Initial window width in pixels.
-constexpr unsigned int WINDOW_HEIGHT = 1080; ///< Initial window height in pixels.
+constexpr unsigned int MAX_START_WIDTH = 1920;
+constexpr unsigned int MAX_START_HEIGHT = 1080;
 constexpr float CAMERA_SPEED = 400.f;       ///< Camera movement in world units per second.
 constexpr float MAX_ZOOM = 1.5f;
 constexpr float ZOOM_PER_NOTCH = 0.125f;
 
-/** @brief Open the game window with a 60 FPS limit and repeated key events disabled. */
+#ifdef _WIN32
+// Set the bounds Windows will use when the player clicks Restore.
+static void centerRestoredWindow(
+    HWND window
+)
+{
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    RECT frame{};
+    if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) ||
+        !GetWindowRect(window, &frame))
+        return;
+
+    const RECT& work = monitor.rcWork;
+    const LONG workWidth = work.right - work.left;
+    const LONG workHeight = work.bottom - work.top;
+    const LONG width = std::min(frame.right - frame.left, workWidth);
+    const LONG height = std::min(frame.bottom - frame.top, workHeight);
+    SetWindowPos(window, nullptr, work.left + (workWidth - width) / 2, work.top + (workHeight - height) / 2,
+                 width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+#endif
+
+/** @brief Open a resizable window and start it maximized on Windows. */
 void setupWindow(
     sf::RenderWindow& window
 )
 {
-    window.create(sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}), "Beltbound");
+    const auto desktop = sf::VideoMode::getDesktopMode().size;
+    const sf::Vector2u size{
+        std::min(MAX_START_WIDTH, desktop.x - desktop.x / 10),
+        std::min(MAX_START_HEIGHT, desktop.y - desktop.y / 10)
+    };
+    window.create(sf::VideoMode(size), "Beltbound");
+#ifdef _WIN32
+    const HWND handle = window.getNativeHandle();
+    centerRestoredWindow(handle);
+    ShowWindow(handle, SW_MAXIMIZE);
+#endif
     window.setFramerateLimit(60);
     window.setKeyRepeatEnabled(false);
 }
@@ -91,6 +132,12 @@ void applyEditorCommand(
             break;
         case EditorCommand::Erase:
             editor.selectTool(TerrainTool::Erase, library.assets);
+            break;
+        case EditorCommand::Undo:
+            ui.notify(editor.undoEdit() ? "Undid last edit" : "Nothing to undo");
+            break;
+        case EditorCommand::Redo:
+            ui.notify(editor.redoEdit() ? "Redid last edit" : "Nothing to redo");
             break;
         case EditorCommand::ToggleLibrary:
             editor.finishEdit();
@@ -153,6 +200,12 @@ void resizeWorldView(sf::RenderWindow& window, sf::View& view, sf::Vector2u pixe
     window.setView(view);
 }
 
+bool shiftHeld()
+{
+    using Key = sf::Keyboard::Key;
+    return sf::Keyboard::isKeyPressed(Key::LShift) || sf::Keyboard::isKeyPressed(Key::RShift);
+}
+
 /** @brief Handle editor input and report focus changes for the camera. */
 bool handleEvents(
     sf::RenderWindow& window,
@@ -166,6 +219,31 @@ bool handleEvents(
 )
 {
     bool focusChanged = false;
+    const auto cellAtPixel = [&](sf::Vector2i pixel) {
+        return pickTerrainCell(grid, editor.getTiles(), projectedMousePoint(window, pixel), art, &library.assets);
+    };
+    const auto canvasCellAt = [&](sf::Vector2i pixel) -> std::optional<sf::Vector2i> {
+        if (!window.hasFocus() || !insideWindow(pixel, window.getSize()) ||
+            editorHit(ui, debug, window.getSize(), pixel) != EditorCommand::Canvas)
+            return std::nullopt;
+        return cellAtPixel(pixel);
+    };
+    const auto sampleAtPixel = [&](sf::Vector2i pixel, bool groundOnly) {
+        if (const auto cell = canvasCellAt(pixel))
+            editor.sampleCell(*cell, groundOnly, ui, library.assets);
+    };
+    const auto updateDrag = [&](sf::Vector2i pixel) {
+        if (editor.rectangleBounds())
+        {
+            if (const auto cell = canvasCellAt(pixel))
+                editor.updateRectangle(*cell);
+            else
+                editor.finishEdit();
+        }
+        else
+            editor.dragTo(pixel, window, window.hasFocus(), grid, debug, ui, art, library.assets);
+    };
+
     while (const auto event = window.pollEvent())
     {
         if (event->is<sf::Event::Closed>())
@@ -199,18 +277,28 @@ bool handleEvents(
         }
         if (const auto* key = event->getIf<sf::Event::KeyPressed>())
         {
-            if (key->code == sf::Keyboard::Key::Z && key->control && !key->alt && !key->shift && !key->system)
-            {
-                if (window.hasFocus())
-                {
-                    const bool undone = editor.undoEdit();
-                    ui.notify(undone ? "Undid last edit" : "Nothing to undo");
-                }
-            }
-            else if (key->code == sf::Keyboard::Key::Escape)
+            if (!window.hasFocus())
+                continue;
+            if (key->code == sf::Keyboard::Key::Escape)
                 editor.cancelSelection();
+            else if (key->code == sf::Keyboard::Key::I && !key->control && !key->alt && !key->system)
+                sampleAtPixel(sf::Mouse::getPosition(window), key->shift);
+            else if (key->code == sf::Keyboard::Key::F && !key->shift && !key->control && !key->alt && !key->system)
+            {
+                const auto cell = canvasCellAt(sf::Mouse::getPosition(window));
+                if (!cell || editor.isDragging() || editor.rectangleBounds())
+                    continue;
+                if (!editor.paintsSurface(library.assets))
+                    ui.notify("Select a terrain brush in Paint to fill");
+                else if (const auto count = editor.fillSurface(*cell, library.assets))
+                    ui.notify("Filled " + std::to_string(count) + (count == 1 ? " cell" : " cells"));
+                else if (findTile(editor.getTiles(), *cell))
+                    ui.notify("This ground already matches your brush");
+                else
+                    ui.notify("Point at painted ground to fill");
+            }
             else
-                applyEditorCommand(editorCommandForKey(key->code), editor, ui, debug, library);
+                applyEditorCommand(editorCommandForKey(*key), editor, ui, debug, library);
         }
         if (const auto* wheel = event->getIf<sf::Event::MouseWheelScrolled>())
         {
@@ -226,17 +314,25 @@ bool handleEvents(
             }
         }
         if (const auto* move = event->getIf<sf::Event::MouseMoved>())
-            editor.dragTo(move->position, window, window.hasFocus(), grid, debug, ui, art, library.assets);
+            updateDrag(move->position);
         if (const auto* release = event->getIf<sf::Event::MouseButtonReleased>())
         {
             if (release->button == sf::Mouse::Button::Left)
             {
-                editor.dragTo(release->position, window, window.hasFocus(), grid, debug, ui, art, library.assets);
-                editor.finishEdit();
+                updateDrag(release->position);
+                if (editor.rectangleBounds())
+                    editor.commitRectangle(ui, library.assets);
+                else
+                    editor.finishEdit();
             }
         }
         if (const auto* click = event->getIf<sf::Event::MouseButtonPressed>())
         {
+            if (click->button == sf::Mouse::Button::Middle)
+            {
+                sampleAtPixel(click->position, shiftHeld());
+                continue;
+            }
             if (click->button != sf::Mouse::Button::Left && click->button != sf::Mouse::Button::Right)
                 continue;
             editor.finishEdit();
@@ -249,14 +345,13 @@ bool handleEvents(
                     applyEditorCommand(hit, editor, ui, debug, library);
                 continue;
             }
-            const auto cell = pickTerrainCell(grid, editor.getTiles(), projectedMousePoint(window, click->position), art,
-                                              &library.assets);
+            const auto cell = cellAtPixel(click->position);
             if (cell)
             {
-                if (click->button == sf::Mouse::Button::Left)
-                    editor.pressCell(*cell, click->position, view, ui, library.assets);
-                else
+                if (click->button == sf::Mouse::Button::Right)
                     editor.clearDecoration(*cell);
+                else if (!shiftHeld() || !editor.beginRectangle(*cell, view, library.assets))
+                    editor.pressCell(*cell, click->position, view, ui, library.assets);
                 debug.log("Clicked cell: " + std::to_string(cell->x) + ", " + std::to_string(cell->y));
             }
         }
@@ -346,13 +441,15 @@ void drawFrame(
 {
     window.clear();
     const auto& selectedAsset = editor.getSelectedAsset();
+    const auto paintArea = editor.rectangleBounds();
     drawIsometricMap(window, grid, editor.getTiles(), art, engineer, debug.isGridVisible(), hoveredCell,
-                     &library.assets, &selectedAsset, editor.getTool() == TerrainTool::Stack);
+                     &library.assets, &selectedAsset, editor.getTool() == TerrainTool::Stack, paintArea);
     debug.draw(window);
     const AssetEntry* selected = selectedAsset.id.empty() ? nullptr : library.assets.index().find(selectedAsset.id);
     ui.draw(window, art, editor.getBrush(), editor.getTool(), debug.isGridVisible(), mousePixels,
             window.hasFocus() && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left),
-            selected ? selected->name : std::string_view{});
+            selected ? selected->name : std::string_view{}, editor.canUndo(), editor.canRedo(),
+            paintArea, selected && selected->groundSurface);
     if (library.browser.isOpen())
         library.browser.draw(window, library.assets.index(), library.assets.art, selectedAsset,
                              library.assets.indexing());
@@ -381,7 +478,7 @@ void runGame(
     resizeWorldView(window, view, window.getSize(), editor.zoom);
     sf::Clock frameClock;
     if (!debug.getFont())
-        window.setTitle("Beltbound | 1-5 Brushes | P Paint  B Raise  L Lower  E Erase | Ctrl+Z Undo | F2 Save  F4 Load  F3 Grid");
+        window.setTitle("Beltbound | 1-5 Brushes | P Paint  Shift+drag Rectangle  I Pick | B Raise  L Lower  E Erase | Ctrl+Z Undo  Ctrl+Y Redo | F2 Save  F4 Load  F3 Grid");
 
     while (window.isOpen())
     {

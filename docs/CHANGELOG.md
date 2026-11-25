@@ -2,6 +2,32 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-25 - Fill a connected terrain patch
+
+- In Paint, point at a painted cell and press **F** to replace connected ground with the selected terrain brush or library ground stamp. Fill follows shared edges and stops when the surface or block height changes.
+- Objects and covered layers stay in place. The editor reports the number of cells filled. One Undo or Redo applies to the whole patch.
+- Verified that one fill repaints 10,000 connected cells, one Undo restores them, and a fill with the current material keeps Redo available.
+
+## 2026-11-24 - Added rectangular terrain painting
+
+- In Paint, Shift+drag with a terrain brush or ground stamp to preview a rectangular patch. The dock shows its width and height in cells. Release to paint or press Esc to cancel.
+- A rectangle paints the exposed surface of each cell and keeps its decorations and lower layers. Undo and Redo each apply to the whole patch.
+
+## 2026-11-24 - Added an eyedropper for map painting
+
+- Press I or middle-click to reuse a cell's decoration, or its terrain if the exposed block has no decoration. Hold Shift to pick the terrain directly. Picking a library stamp keeps its row and frame.
+- Picking a brush preserves the map and its undo and redo history. The dock displays the selection or explains why the cell could not be sampled.
+- The pointer now follows the visible outline of rocks and flowers, including petals that extend over a neighboring cell.
+
+## 2026-11-24 - Fixed startup window placement
+
+- Beltbound starts maximized on Windows so the editor fills the desktop above the taskbar. Restore returns it to a smaller, centered window with the title bar and editor dock on screen.
+
+## 2026-11-24 - Added redo and history controls
+
+- The editor dock has Undo and Redo buttons. Ctrl+Z takes back an edit. Ctrl+Y or Ctrl+Shift+Z reapplies it, including a whole paint or erase stroke.
+- Switching brushes after an undo keeps Redo available. Changing a tile or successfully loading a saved map clears the redo history.
+
 ## 2026-11-23 - Centralized map edits and brush selection
 
 - `MapEditor` owns brush and tool selection, the active stroke, and undo history. Keyboard shortcuts and palette clicks use the same selection rules. The library returns a stamp when the player confirms a pose.
