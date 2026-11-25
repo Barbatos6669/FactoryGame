@@ -46,26 +46,81 @@ sf::FloatRect objectBounds(const sf::Image& image, sf::Vector2f top, float scale
     return {top - objectAnchor * scale, sf::Vector2f(image.getSize()) * scale};
 }
 
-struct PaintFootprint
+struct SceneColumn
+{
+    sf::Vector2i cell;
+    const Tile* tile;
+    bool pasted;
+};
+
+enum class Footprint { Paint, Raise, Lower, Skipped, Copy, CopyEmpty, Paste, InvalidPaste };
+
+struct RectangleFootprint
 {
     sf::VertexArray faces{sf::PrimitiveType::Triangles};
     sf::VertexArray edges{sf::PrimitiveType::Lines};
 
-    void addCell(sf::Vector2i cell, sf::Vector2f front, float side, const sf::IntRect& area)
+    void addCell(sf::Vector2i cell, sf::Vector2f front, float side, const sf::IntRect& area,
+                 Footprint kind)
     {
-        constexpr sf::Color fill{255, 198, 98, 78};
-        constexpr sf::Color border{255, 222, 156};
+        sf::Color fill{255, 198, 98, 78};
+        sf::Color border{255, 222, 156};
+        if (kind == Footprint::Skipped)
+        {
+            fill = {135, 144, 158, 46};
+            border = {168, 177, 190};
+        }
+        else if (kind == Footprint::Raise)
+        {
+            fill = {94, 225, 180, 145};
+            border = {173, 255, 215};
+        }
+        else if (kind == Footprint::Lower)
+        {
+            fill = {170, 140, 250, 112};
+            border = {218, 195, 255};
+        }
+        else if (kind == Footprint::Copy || kind == Footprint::CopyEmpty || kind == Footprint::Paste)
+        {
+            fill = {60, 187, 230, 76};
+            border = {155, 234, 255};
+        }
+        else if (kind == Footprint::InvalidPaste)
+        {
+            fill = {232, 76, 82, 145};
+            border = {255, 172, 155};
+        }
         const auto back = front - sf::Vector2f{0.f, side / 2.f};
         const auto left = front - sf::Vector2f{side / 2.f, side / 4.f};
         const auto right = front + sf::Vector2f{side / 2.f, -side / 4.f};
-        for (const auto point : {back, right, front, back, front, left})
-            faces.append({point, fill});
+        if (kind == Footprint::Raise)
+        {
+            // The two visible faces give the proposed block thickness, including on empty ground.
+            const sf::Vector2f down{0.f, side * terrainLayerHeightRatio};
+            for (const auto point : {left, front, front + down, left, front + down, left + down})
+                faces.append({point, sf::Color{53, 156, 125, 160}});
+            for (const auto point : {front, right, right + down, front, right + down, front + down})
+                faces.append({point, sf::Color{40, 129, 108, 160}});
+        }
+        if (kind != Footprint::CopyEmpty)
+            for (const auto point : {back, right, front, back, front, left})
+                faces.append({point, fill});
 
         const auto edge = [&](sf::Vector2f from, sf::Vector2f to) {
             edges.append({from, border});
             edges.append({to, border});
         };
         const auto end = area.position + area.size;
+        if (kind == Footprint::Skipped)
+        {
+            const auto center = (front + back) / 2.f;
+            edge(center - sf::Vector2f{side / 8.f, 0.f}, center + sf::Vector2f{side / 8.f, 0.f});
+        }
+        if (kind == Footprint::InvalidPaste)
+        {
+            edge((back + left) / 2.f, (front + right) / 2.f);
+            edge((back + right) / 2.f, (front + left) / 2.f);
+        }
         if (cell.x == area.position.x) edge(left, back);
         if (cell.y == area.position.y) edge(back, right);
         if (cell.x + 1 == end.x) edge(right, front);
@@ -82,7 +137,7 @@ struct PaintFootprint
 };
 
 // Walk the rectangle on the same diagonals as the sorted columns, skipping occupied cells.
-std::vector<sf::Vector2i> emptyPaintCells(const sf::IntRect& area, const std::vector<const Tile*>& visible,
+std::vector<sf::Vector2i> emptyRectangleCells(const sf::IntRect& area, const std::vector<SceneColumn>& visible,
                                          const sf::FloatRect& bounds, float side)
 {
     std::vector<sf::Vector2i> empty;
@@ -94,8 +149,8 @@ std::vector<sf::Vector2i> emptyPaintCells(const sf::IntRect& area, const std::ve
         for (int x = firstX; x <= lastX; ++x)
         {
             const sf::Vector2i cell = area.position + sf::Vector2i{x, diagonal - x};
-            while (occupied != visible.end() && behind((*occupied)->cell, cell)) ++occupied;
-            if ((occupied == visible.end() || (*occupied)->cell != cell) && bounds.contains(baseFront(cell, side)))
+            while (occupied != visible.end() && behind(occupied->cell, cell)) ++occupied;
+            if ((occupied == visible.end() || occupied->cell != cell) && bounds.contains(baseFront(cell, side)))
                 empty.push_back(cell);
         }
     }
@@ -256,7 +311,8 @@ std::optional<sf::Vector2i> TerrainStrokePicker::pick(sf::Vector2f point) const
 void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vector<Tile>& tiles,
                       const IsometricArt& art, const Engineer* engineer, bool showGrid,
                       std::optional<sf::Vector2i> hoveredCell, AssetLibrary* library, const AssetPlacement* preview,
-                      bool previewRaised, std::optional<sf::IntRect> paintArea)
+                      TerrainTool tool, std::optional<sf::IntRect> editArea,
+                      bool copyingArea, const TilePatch* pastePreview)
 {
     const float side = static_cast<float>(grid.cellSize);
     const float scale = side / 32.f;
@@ -265,41 +321,94 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
     const sf::Vector2f padding{side * 2.f, side * 2.f + step * (MAX_TERRAIN_LAYERS - 1)};
     const sf::FloatRect bounds(view.getCenter() - view.getSize() / 2.f - padding,
                                view.getSize() + padding * 2.f);
-    std::vector<const Tile*> visible;
-    for (const Tile& tile : tiles)
+    const bool pasting = pastePreview && hoveredCell && !editArea && !pastePreview->tiles.empty() &&
+                         pastePreview->size.x > 0 && pastePreview->size.y > 0 &&
+                         hoveredCell->x >= 0 && hoveredCell->y >= 0 && hoveredCell->x < grid.size && hoveredCell->y < grid.size;
+    const bool validPaste = pasting && pastePreview->fits(*hoveredCell, grid.size);
+    // Index only the part of the clipboard over the board. Holes keep the original columns.
+    sf::IntRect pasteOverlap;
+    std::vector<const Tile*> replacements;
+    if (pasting)
     {
-        const auto base = baseFront(tile.cell, side);
-        bool onScreen = bounds.contains(base);
-        if (!onScreen && library && !tile.layers.back().asset.id.empty())
+        pasteOverlap = {*hoveredCell, {std::min(pastePreview->size.x, grid.size - hoveredCell->x),
+                                      std::min(pastePreview->size.y, grid.size - hoveredCell->y)}};
+        const auto width = static_cast<std::size_t>(pasteOverlap.size.x);
+        replacements.resize(width * pasteOverlap.size.y);
+        const sf::IntRect offsets{{0, 0}, pasteOverlap.size};
+        for (const Tile& tile : pastePreview->tiles)
+            if (offsets.contains(tile.cell))
+                replacements[width * tile.cell.y + tile.cell.x] = &tile;
+    }
+    const auto replacementAt = [&](sf::Vector2i cell) -> const Tile* {
+        if (!pasteOverlap.contains(cell))
+            return nullptr;
+        const auto offset = cell - pasteOverlap.position;
+        return replacements[static_cast<std::size_t>(offset.y) * pasteOverlap.size.x + offset.x];
+    };
+
+    const auto previewLayerCount = [&](sf::Vector2i cell, const Tile& tile) {
+        const auto count = tile.layers.size();
+        if (!copyingArea && editArea && editArea->contains(cell))
         {
-            const auto& item = tile.layers.back().asset;
-            if (const auto* entry = library->find(item, false))
+            if (tool == TerrainTool::Stack && count < MAX_TERRAIN_LAYERS) return count + 1;
+            if (tool == TerrainTool::Lower && count > 1) return count - 1;
+        }
+        return count;
+    };
+    std::vector<SceneColumn> visible;
+    const auto includeVisible = [&](sf::Vector2i cell, const Tile& tile, bool pasted) {
+        const auto base = baseFront(cell, side);
+        bool onScreen = bounds.contains(base);
+        if (!onScreen && library)
+        {
+            const auto count = previewLayerCount(cell, tile);
+            if (count <= tile.layers.size())
             {
-                const auto top = base - sf::Vector2f{0.f, columnElevation(tile, side)};
-                onScreen = bounds.findIntersection(library->art.worldBounds(*entry, item.row, top, scale)).has_value();
+                const auto& item = tile.layers[count - 1].asset;
+                if (const auto* entry = library->find(item, false))
+                {
+                    const auto top = base - sf::Vector2f{0.f, static_cast<float>(count - 1) * step};
+                    onScreen = bounds.findIntersection(library->art.worldBounds(*entry, item.row, top, scale)).has_value();
+                }
             }
         }
         if (onScreen)
-            visible.push_back(&tile);
+            visible.push_back({cell, &tile, pasted});
+    };
+    for (const Tile& tile : tiles)
+    {
+        if (!pasting || !replacementAt(tile.cell))
+            includeVisible(tile.cell, tile, false);
     }
-    std::sort(visible.begin(), visible.end(), [](const Tile* a, const Tile* b) {
-        return behind(a->cell, b->cell);
+    if (pasting)
+        for (const Tile& tile : pastePreview->tiles)
+            includeVisible(*hoveredCell + tile.cell, tile, true);
+    std::sort(visible.begin(), visible.end(), [](const SceneColumn& a, const SceneColumn& b) {
+        // A saved column outside the board can coincide with an invalid placement ghost.
+        if (a.cell == b.cell) return !a.pasted && b.pasted;
+        return behind(a.cell, b.cell);
     });
 
     if (showGrid)
         grid.draw(target);
-    if (!paintArea && hoveredCell && !findTile(tiles, *hoveredCell))
+    if (!pasting && !editArea && hoveredCell && !findTile(tiles, *hoveredCell))
         grid.drawCellOutline(target, *hoveredCell, 0.f, sf::Color::Yellow);
 
     // Insert the engineer at his own cell, so columns in front can hide him.
     const auto feet = engineer ? engineer->getPosition() : sf::Vector2f{};
     const auto feetCell = grid.worldToCell(feet);
-    const float feetHeight = engineer ? terrainElevationAt(grid, tiles, feet) : 0.f;
+    const Tile* feetTile = engineer && grid.contains(feet) ? findTile(tiles, feetCell) : nullptr;
+    if (pasting && engineer)
+    {
+        if (const Tile* replacement = replacementAt(feetCell))
+            feetTile = replacement;
+    }
+    const float feetHeight = feetTile ? static_cast<float>(previewLayerCount(feetCell, *feetTile) - 1) * step : 0.f;
     bool engineerPending = engineer != nullptr;
-    PaintFootprint footprint;
-    const auto empty = paintArea ? emptyPaintCells(*paintArea, visible, bounds, side) : std::vector<sf::Vector2i>{};
+    RectangleFootprint footprint;
+    const auto empty = editArea ? emptyRectangleCells(*editArea, visible, bounds, side) : std::vector<sf::Vector2i>{};
     auto nextEmpty = empty.begin();
-    const auto drawEmptyUntil = [&](const Tile* nextColumn) {
+    const auto drawEmptyUntil = [&](const SceneColumn* nextColumn) {
         while (nextEmpty != empty.end() && (!nextColumn || behind(*nextEmpty, nextColumn->cell)))
         {
             if (engineerPending && behind(feetCell, *nextEmpty))
@@ -308,25 +417,32 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
                 engineer->draw(target, feetHeight);
                 engineerPending = false;
             }
-            footprint.addCell(*nextEmpty, baseFront(*nextEmpty, side), side, *paintArea);
+            Footprint kind = Footprint::Paint;
+            if (copyingArea) kind = Footprint::CopyEmpty;
+            else if (tool == TerrainTool::Stack) kind = Footprint::Raise;
+            else if (tool == TerrainTool::Lower) kind = Footprint::Skipped;
+            footprint.addCell(*nextEmpty, baseFront(*nextEmpty, side), side, *editArea, kind);
             ++nextEmpty;
         }
         footprint.drawAndClear(target);
     };
-    for (const Tile* tile : visible)
+    for (const SceneColumn& column : visible)
     {
+        const auto cell = column.cell;
+        const Tile* tile = column.tile;
         if (nextEmpty != empty.end())
-            drawEmptyUntil(tile);
-        if (engineerPending && behind(feetCell, tile->cell))
+            drawEmptyUntil(&column);
+        if (engineerPending && behind(feetCell, cell))
         {
             engineer->draw(target, feetHeight);
             engineerPending = false;
         }
-        const sf::Vector2f base = baseFront(tile->cell, side);
+        const sf::Vector2f base = baseFront(cell, side);
         sf::Vector2f front = base;
-        for (std::size_t i = 0; i < tile->layers.size(); ++i)
+        const auto count = previewLayerCount(cell, *tile);
+        for (std::size_t i = 0; i < std::min(count, tile->layers.size()); ++i)
         {
-            const std::size_t layersAbove = tile->layers.size() - 1 - i;
+            const std::size_t layersAbove = count - 1 - i;
             const auto& layer = tile->layers[i];
             bool drawn = false;
             if (library && !layer.groundAsset.id.empty())
@@ -341,26 +457,37 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
                 drawIsometricGround(target, art, layer.terrain, front, scale, layersAbove);
             front.y -= step;
         }
-        const float elevation = columnElevation(*tile, side);
+        const float elevation = static_cast<float>(count - 1) * step;
         const sf::Vector2f top = base - sf::Vector2f{0.f, elevation};
-        if (!paintArea && hoveredCell == tile->cell)
-            grid.drawCellOutline(target, tile->cell, elevation, sf::Color::Yellow);
+        if (!pasting && !editArea && hoveredCell == cell)
+            grid.drawCellOutline(target, cell, elevation, sf::Color::Yellow);
         else if (showGrid)
-            grid.drawCellOutline(target, tile->cell, elevation, sf::Color::White);
+            grid.drawCellOutline(target, cell, elevation, sf::Color::White);
 
-        if (paintArea && paintArea->contains(tile->cell))
+        if (editArea && editArea->contains(cell))
         {
-            footprint.addCell(tile->cell, top, side, *paintArea);
+            Footprint kind = Footprint::Paint;
+            if (copyingArea) kind = Footprint::Copy;
+            else if (tool == TerrainTool::Stack) kind = count == tile->layers.size() ? Footprint::Skipped : Footprint::Raise;
+            else if (tool == TerrainTool::Lower) kind = count == tile->layers.size() ? Footprint::Skipped : Footprint::Lower;
+            footprint.addCell(cell, top, side, *editArea, kind);
+            footprint.drawAndClear(target);
+        }
+        else if (column.pasted)
+        {
+            footprint.addCell(cell, top, side, {cell, {1, 1}}, validPaste ? Footprint::Paste : Footprint::InvalidPaste);
             footprint.drawAndClear(target);
         }
 
         // Within the same cell, compare the engineer's feet to the decoration's ground contact.
-        if (engineerPending && feetCell == tile->cell && mapToView(feet).y < base.y - side / 4.f)
+        if (engineerPending && feetCell == cell && mapToView(feet).y < base.y - side / 4.f)
         {
             engineer->draw(target, feetHeight);
             engineerPending = false;
         }
-        const auto& surface = tile->layers.back();
+        if (count > tile->layers.size()) // The preview block covers the current decoration.
+            continue;
+        const auto& surface = tile->layers[count - 1];
         if (library && !surface.asset.id.empty())
         {
             const auto* entry = library->find(surface.asset, false);
@@ -382,7 +509,7 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
         drawEmptyUntil(nullptr);
     if (engineerPending)
         engineer->draw(target, feetHeight);
-    if (!paintArea && library && preview && hoveredCell && !preview->id.empty())
+    if (!pasting && !editArea && library && preview && hoveredCell && !preview->id.empty())
     {
         const auto* entry = library->index().find(preview->id);
         if (entry && entry->placeable)
@@ -391,7 +518,7 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
             if (const Tile* tile = findTile(tiles, *hoveredCell))
             {
                 top.y -= columnElevation(*tile, side);
-                if (previewRaised && tile->layers.size() < MAX_TERRAIN_LAYERS)
+                if (tool == TerrainTool::Stack && tile->layers.size() < MAX_TERRAIN_LAYERS)
                     top.y -= step;
             }
             library->art.drawWorld(target, *entry, *preview, top, scale, sf::Color{255, 255, 255, 140});

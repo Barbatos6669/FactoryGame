@@ -2,6 +2,24 @@
 
 Record meaningful changes, validation, and the next milestone here. Newest entries come first. Entries describe development checkpoints, not necessarily releases.
 
+## 2026-11-25 - Redesigned the editor dock
+
+- The dock header shows the active tool and selection. Compact mode (F6) frees map space while keeping the current selection and edit feedback visible.
+- Open Shortcuts (F1) to look up a terrain gesture, map command, or camera control. The panel captures input while you read it. Esc or F1 returns to editing.
+- Checked the dock controls, painting in the space freed by compact mode, and camera and map input while help is open across nine window sizes.
+
+## 2026-11-25 - Copy and paste map patches
+
+- Ctrl+drag copies a rectangle from any editing tool. Ctrl+C copies a single hovered column. Hold Ctrl to preview the copy, then press Ctrl+V to paste at the pointer. The whole rectangle must fit inside the grid.
+- Paste restores every layer of the copied columns, including terrain stamps and decorations. Gaps are transparent. The copy can be reused, and each paste can be undone separately.
+- Verified overlapping pastes, save/load, grid-edge rejection, and undo/redo. A render check confirmed that undoing a pasted hillside restores the original map image.
+
+## 2026-11-25 - Raise and lower terrain in rectangles
+
+- Hold Shift and drag with Raise or Lower to preview a rectangular area. Release to change its height by one block per eligible cell. The dock reports how many cells changed. One Undo restores the whole area.
+- Raise uses the selected terrain or library ground stamp, creates bases on empty cells, and stops at eight blocks. Lower reveals the previous layer with its original terrain and decoration and stops at the base.
+- Tested mixed-height edits across a 100-by-100 map, including undo, redo, and save/load. Render checks confirmed that undo restores the original terrain image.
+
 ## 2026-11-25 - Fill a connected terrain patch
 
 - In Paint, point at a painted cell and press **F** to replace connected ground with the selected terrain brush or library ground stamp. Fill follows shared edges and stops when the surface or block height changes.

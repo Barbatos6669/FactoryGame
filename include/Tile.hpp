@@ -30,6 +30,12 @@ struct TerrainLayer
     TileObject object = TileObject::None;
     AssetPlacement asset{};
     AssetPlacement groundAsset{};
+
+    bool operator==(const TerrainLayer& other) const
+    {
+        return terrain == other.terrain && object == other.object &&
+               asset == other.asset && groundAsset == other.groundAsset;
+    }
 };
 
 inline constexpr int MAX_TERRAIN_LAYERS = 8;
@@ -41,7 +47,18 @@ struct Tile
     std::vector<TerrainLayer> layers = {TerrainLayer{}};
 };
 
+/// A map selection stores complete columns at offsets from its minimum x and y.
+/// Cells missing from tiles are transparent when the patch is pasted.
+struct TilePatch
+{
+    sf::Vector2i size{};
+    std::vector<Tile> tiles;
+
+    bool fits(sf::Vector2i anchor, int gridSize) const;
+};
+
 enum class Brush { Grass, Dirt, Water, Rock, Flower };
+enum class TerrainTool { Paint, Stack, Lower, Erase };
 
 std::vector<Tile> makeSampleTiles(int gridSize);
 const Tile* findTile(const std::vector<Tile>& tiles, sf::Vector2i cell);
@@ -53,6 +70,11 @@ std::vector<std::size_t> terrainFillCells(const std::vector<Tile>& tiles, sf::Ve
                                           Brush brush, const AssetPlacement& groundStamp);
 /// Paint the exposed surfaces. A nonempty ground stamp supplies the artwork in place of a terrain brush.
 bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush brush, AssetPlacement groundStamp);
+/// Add one block per cell, including empty cells. Return the number below the height limit that were raised.
+std::size_t raiseTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, TerrainType terrain,
+                                  const AssetPlacement& groundStamp);
+/// Remove one upper block per painted cell in the rectangle. Bases stay in place.
+std::size_t lowerTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds);
 bool placeAsset(std::vector<Tile>& tiles, sf::Vector2i cell, const AssetPlacement& asset, bool groundSurface = false);
 void clearTileObject(std::vector<Tile>& tiles, sf::Vector2i cell);
 

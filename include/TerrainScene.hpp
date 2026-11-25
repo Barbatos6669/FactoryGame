@@ -38,4 +38,5 @@ void drawIsometricMap(sf::RenderTarget& target, const Grid& grid, const std::vec
                       const IsometricArt& art, const Engineer* engineer, bool showGrid,
                       std::optional<sf::Vector2i> hoveredCell = std::nullopt,
                       AssetLibrary* library = nullptr, const AssetPlacement* preview = nullptr,
-                      bool previewRaised = false, std::optional<sf::IntRect> paintArea = std::nullopt);
+                      TerrainTool tool = TerrainTool::Paint, std::optional<sf::IntRect> editArea = std::nullopt,
+                      bool copyingArea = false, const TilePatch* pastePreview = nullptr);

@@ -14,6 +14,7 @@ Beltbound is a small C++17/SFML 3 learning project. The map stores 100 rows and 
 - `include/Engineer.hpp` and `src/Engineer.cpp` own the woodland engineer's position, facing, animation clock, and idle/walk textures. Each tick uses the change in his feet position to choose his facing and animation.
 - `include/Debug.hpp` and `src/Debug.cpp` provide optional console logging and the on-screen debug overlay.
 - `include/EditorUI.hpp` and `src/EditorUI.cpp` lay out the screen-space palette, draw the controls and feedback, and identify the control under a pointer. The editor shares the diagnostics font and tile textures.
+- `EditorUI` owns the compact dock setting and the shortcut reference in `src/EditorHelp.cpp`. Each panel uses the same geometry for drawing and hit testing. While the reference is open, it receives input and the camera and engineer stay still.
 - `AssetCatalog.cpp` reads the optional Tiny Warfare manifest and scans installed visual assets. Each entry has an ID relative to the assets folder, a category, frame geometry and anchor. `AssetBrowser.cpp` handles search, navigation and stamp selection. `AssetBrowserDraw.cpp` draws the library.
 - `AssetArt.cpp` indexes on a background worker on first use and caches the individual frames drawn by the library and map. Each cached frame has a texture for drawing and opacity data for picking. The cache can hold up to 512 frames within 48 MiB.
 - `assets/fonts/` contains the unmodified Tuffy 1.1 font, its public-domain notice, and source attribution. The runtime font path is `assets/fonts/Tuffy.ttf` relative to the executable's folder, resolved from `argv[0]` in `main()`.
@@ -43,9 +44,11 @@ Click, hover, and the eyedropper use the same lookup. When stacks overlap, the f
 
 Holding the left button with a terrain brush or Erase starts a stroke. Movement and release trace the screen pixels between reported mouse positions. A temporary index groups nearby columns for these lookups and adds new cells as they are painted. The lookup uses the same sprite opacity and depth rules as a click. Each visible cell is edited once per stroke.
 
-Holding Shift at the start of a terrain paint drag selects a rectangle. Its two corners are picked map cells, so a drag in either direction includes both endpoints. The renderer previews the footprint while the map still holds its original tiles. Releasing over the map applies the brush to the exposed surfaces and records one edit. Escape, losing focus, or moving off the canvas discards the preview.
+Holding Shift at the start of a terrain Paint, Raise, or Lower drag selects a rectangle. Its two corners are picked map cells, so a drag in either direction includes both endpoints. The renderer previews the footprint while the map still holds its original tiles. Releasing over the map paints the exposed surfaces or changes each eligible column by one block. The entire rectangle forms one history entry. Escape, losing focus, or moving off the canvas discards the preview.
 
 Pressing F over a painted cell calls `MapEditor::fillSurface()`. From that cell, fill visits edge neighbors at the same stack height with the same exposed ground. Library ground matches by asset ID, row, and frame. The operation replaces only the exposed ground across the patch and records every changed cell in one history entry.
+
+Ctrl+drag uses the same two-corner selection to copy a `TilePatch`. It stores the rectangle dimensions and copies the occupied columns, with each coordinate relative to the corner with the lowest x and y. Preview and paste use that corner as their anchor. Because the clipboard owns its layer data, overlapping the source or editing it later leaves the copy intact. Paste records the destination columns that changed as one edit.
 
 An Erase click immediately removes the exposed layer, including the base if it is the last block. If the pointer moves, the stroke picks against the columns as they looked at the press. A return pass over a freshly exposed tile therefore leaves it alone until the next press. Erased base cells have no save row. An empty save represents an empty map.
 

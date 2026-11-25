@@ -1,6 +1,7 @@
 #include "EditorUI.hpp"
 
 #include <SFML/Graphics/RectangleShape.hpp>
+#include <SFML/Graphics/ConvexShape.hpp>
 #include <SFML/Graphics/Text.hpp>
 #include <SFML/System/Time.hpp>
 #include <algorithm>
@@ -47,26 +48,32 @@ constexpr std::array<ActionButton, 10> actions{{
     {Command::Undo, "Ctrl+Z", Key::Unknown}, {Command::Redo, "Ctrl+Y", Key::Unknown}
 }};
 
-constexpr sf::Color panelColor{24, 31, 38};
-constexpr sf::Color panelLine{74, 87, 94};
-constexpr sf::Color cardColor{38, 48, 56};
-constexpr sf::Color hoverColor{54, 67, 75};
-constexpr sf::Color pressedColor{64, 75, 81};
-constexpr sf::Color borderColor{68, 82, 91};
-constexpr sf::Color textColor{242, 245, 241};
-constexpr sf::Color quietColor{180, 194, 201};
-constexpr sf::Color disabledText{139, 151, 158};
-constexpr sf::Color accent{245, 192, 114};
-constexpr sf::Color selectedFill{71, 58, 43};
+constexpr sf::Color panelColor{23,35,44};
+constexpr sf::Color headerColor{32,49,59};
+constexpr sf::Color panelLine{82,105,114};
+constexpr sf::Color railColor{17,28,36};
+constexpr sf::Color cardColor{39,57,67};
+constexpr sf::Color hoverColor{53,76,87};
+constexpr sf::Color pressedColor{67,94,104};
+constexpr sf::Color borderColor{63,83,93};
+constexpr sf::Color textColor{236,244,243};
+constexpr sf::Color quietColor{179,195,199};
+constexpr sf::Color disabledText{127,146,153};
+constexpr sf::Color cyan{124,228,210};
+constexpr sf::Color selectedFill{44,83,84};
+constexpr sf::Color amber{255,208,140};
 
 struct Layout
 {
-    float scale;
-    Rect panel;
-    std::array<Rect, brushes.size()> brushCards;
-    std::array<Rect, actions.size()> actionCards;
-    bool stacked;
-    float footerY;
+    float scale = 0.f;
+    Rect panel, header, help, toggle;
+    std::array<Rect, brushes.size()> brushCards{};
+    std::array<Rect, actions.size()> actionCards{};
+    bool stacked = false;
+    bool narrow = false;
+    bool compact = false;
+    float padding = 0.f;
+    float footerY = 0.f;
 };
 
 // Keep bevels and clickable edges on whole screen pixels at non-integer scales.
@@ -80,93 +87,94 @@ void snapToPixels(Rect& area, float scale)
     area.size = end - area.position;
 }
 
-// Drawing and input use the same rectangles, including immediately after a resize.
-Layout makeLayout(sf::Vector2u size)
+// Drawing and hit testing share these coordinates, including immediately after a resize.
+Layout makeLayout(sf::Vector2u size, bool compact = false)
 {
-    Layout layout{};
-    // Leave room for the title bar and taskbar on 1440p and 2160p displays.
+    Layout layout;
     float preferredScale = 1.f;
-    if (size.x >= 2560 && size.y >= 1800)
-        preferredScale = 2.f;
-    else if (size.x >= 1920 && size.y >= 1260)
-        preferredScale = 1.5f;
+    if (size.x >= 2560 && size.y >= 1800) preferredScale = 2.f;
+    else if (size.x >= 1920 && size.y >= 1260) preferredScale = 1.5f;
     layout.scale = std::min({preferredScale, size.x / 320.f, size.y / 340.f});
-    if (layout.scale <= 0.f)
-        return layout;
+    if (layout.scale <= 0.f) return layout;
 
     const sf::Vector2f screen = sf::Vector2f(size) / layout.scale;
-    layout.stacked = screen.x < 680.f;
+    layout.compact = compact;
+    layout.stacked = screen.x < 710.f;
     const float margin = layout.stacked ? 6.f : 12.f;
-    const float width = std::min(736.f, std::floor(screen.x) - 2.f * margin);
-    const float padding = layout.stacked ? 8.f : 12.f;
-    const bool narrow = width < 435.f;
-    const float actionHeight = narrow ? 35.f : layout.stacked ? 26.f : 23.f;
-    const float footerHeight = narrow ? 49.f : 37.f;
-    const float historyHeight = 25.f;
-    const float height = (layout.stacked ? 82.f + 2.f * actionHeight + 11.f + historyHeight + 4.f : 140.f) + footerHeight;
+    const float width = std::min(compact ? 584.f : 864.f, std::floor(screen.x) - 2.f * margin);
+    layout.narrow = width < 460.f;
+    layout.padding = layout.stacked ? 8.f : 12.f;
+    const float headerHeight = layout.narrow ? 40.f : 36.f;
+    const float actionHeight = layout.narrow ? 34.f : layout.stacked ? 24.f : 21.f;
+    const float brushHeight = layout.stacked ? 55.f : 4.f * actionHeight + 9.f;
+    const float footerHeight = compact ? 24.f : layout.narrow ? 47.f : 40.f;
+    const float controlsHeight = compact ? 0.f : 22.f + brushHeight + 6.f +
+        (layout.stacked ? 2.f * (actionHeight + 4.f) + 28.f : 0.f);
+    const float height = headerHeight + controlsHeight + footerHeight;
     const float left = std::floor((screen.x - width) / 2.f);
     const float top = std::floor(screen.y - margin - height);
-    layout.panel = {{left, top}, {width, height}};
+    layout.panel = {{left,top},{width,height}};
+    layout.header = {{left,top},{width,headerHeight}};
     layout.footerY = top + height - footerHeight;
 
-    const float actionWidth = 222.f;
-    const float innerWidth = width - 2.f * padding;
-    const float paletteWidth = layout.stacked ? innerWidth : innerWidth - actionWidth - 16.f;
-    const float gap = 4.f;
-    const float groupGap = 10.f;
-    const float brushWidth = std::floor((paletteWidth - 3.f * gap - groupGap) / brushes.size());
-    float x = left + padding;
-    const float rowY = top + (layout.stacked ? 24.f : 31.f);
+    const float headerButton = layout.narrow ? 62.f : 92.f;
+    const float endX = left + width - layout.padding;
+    const float buttonsY = top + std::floor((headerHeight - 24.f) / 2.f);
+    layout.toggle = {{endX - headerButton, buttonsY}, {headerButton,24.f}};
+    layout.help = {{layout.toggle.position.x - 4.f - headerButton, buttonsY}, {headerButton,24.f}};
+    snapToPixels(layout.panel, layout.scale);
+    snapToPixels(layout.header, layout.scale);
+    snapToPixels(layout.help, layout.scale);
+    snapToPixels(layout.toggle, layout.scale);
+    if (compact) return layout;
+
+    const float inner = width - 2.f * layout.padding;
+    const float startX = left + layout.padding;
+    const float rowY = top + headerHeight + 22.f;
+    const float paletteWidth = layout.stacked ? inner : inner - 244.f;
+    const float brushWidth = std::floor((paletteWidth - 24.f) / brushes.size());
+    float x = startX;
     for (std::size_t i = 0; i < brushes.size(); ++i)
     {
-        layout.brushCards[i] = {{x, rowY}, {brushWidth, layout.stacked ? 53.f : 104.f}};
-        x += brushWidth + (i == 2 ? groupGap : gap);
+        layout.brushCards[i] = {{x,rowY},{brushWidth,brushHeight}};
+        x += brushWidth + (i == 2 ? 12.f : 4.f);
     }
 
-    const float groupLabelWidth = 35.f;
-    const float actionLeft = layout.stacked ? left + padding + groupLabelWidth : left + width - padding - actionWidth;
-    const float actionTop = layout.stacked ? rowY + 58.f : rowY;
-    const float buttonWidth = layout.stacked ? std::floor((innerWidth - groupLabelWidth - 3.f * gap) / 4.f)
-                                            : (actionWidth - groupGap) / 2.f;
+    const float actionLeft = layout.stacked ? startX + 40.f : endX - 232.f;
+    const float actionTop = layout.stacked ? rowY + brushHeight + 6.f : rowY;
+    const float buttonWidth = layout.stacked ? std::floor((endX - actionLeft - 12.f) / 4.f) : 112.f;
     for (int i = 0; i < static_cast<int>(firstHistoryButton); ++i)
     {
-        const int group = i / 4;
-        const int slot = i % 4;
-        const int column = layout.stacked ? slot : group;
-        const int row = layout.stacked ? group : slot;
-        const float columnGap = layout.stacked ? gap : groupGap;
-        layout.actionCards[i] = {{actionLeft + column * (buttonWidth + columnGap),
-                                  actionTop + row * (actionHeight + gap)}, {buttonWidth, actionHeight}};
+        const int col = layout.stacked ? i % 4 : i / 4;
+        const int row = layout.stacked ? i / 4 : i % 4;
+        const float actionX = actionLeft + col * (buttonWidth + (layout.stacked ? 4.f : 8.f));
+        layout.actionCards[i] = {{actionX,actionTop + row * (actionHeight + (layout.stacked ? 4.f : 3.f))},
+                                 {buttonWidth,actionHeight}};
     }
-    const float historyWidth = layout.stacked ? 2.f * buttonWidth + gap : 96.f;
-    const float historyLeft = layout.stacked ? actionLeft : left + width - padding - 2.f * historyWidth - gap;
-    const float historyTop = layout.stacked ? actionTop + 2.f * (actionHeight + gap) : layout.footerY + 6.f;
+    const float historyWidth = layout.stacked ? 2.f * buttonWidth + 4.f : 98.f;
+    const float historyLeft = layout.stacked ? actionLeft : endX - 2.f * historyWidth - 4.f;
+    const float historyTop = layout.stacked ? actionTop + 2.f * (actionHeight + 4.f) : layout.footerY + 8.f;
     for (std::size_t i = firstHistoryButton; i < actions.size(); ++i)
-        layout.actionCards[i] = {{historyLeft + (i - firstHistoryButton) * (historyWidth + gap), historyTop},
-                                 {historyWidth, historyHeight}};
-    if (layout.scale != std::floor(layout.scale))
-    {
-        snapToPixels(layout.panel, layout.scale);
-        for (Rect& card : layout.brushCards) snapToPixels(card, layout.scale);
-        for (Rect& card : layout.actionCards) snapToPixels(card, layout.scale);
-    }
+        layout.actionCards[i] = {{historyLeft + (i-firstHistoryButton)*(historyWidth+4.f),historyTop},{historyWidth,24.f}};
+    for (Rect& area : layout.brushCards) snapToPixels(area, layout.scale);
+    for (Rect& area : layout.actionCards) snapToPixels(area, layout.scale);
     return layout;
 }
 
 Command commandAt(const Layout& layout, sf::Vector2i pixel)
 {
-    if (layout.scale <= 0.f)
-        return Command::Canvas;
-    // A rasterized pixel is sampled at its center, including at fractional UI scales.
-    const sf::Vector2f point = (sf::Vector2f(pixel) + sf::Vector2f{0.5f, 0.5f}) / layout.scale;
-    if (!layout.panel.contains(point))
-        return Command::Canvas;
-    for (std::size_t i = 0; i < brushes.size(); ++i)
-        if (layout.brushCards[i].contains(point))
-            return brushes[i].command;
-    for (std::size_t i = 0; i < actions.size(); ++i)
-        if (layout.actionCards[i].contains(point))
-            return actions[i].command;
+    if (layout.scale <= 0.f) return Command::Canvas;
+    const sf::Vector2f point = (sf::Vector2f(pixel) + sf::Vector2f{0.5f,0.5f}) / layout.scale;
+    if (!layout.panel.contains(point)) return Command::Canvas;
+    if (layout.toggle.contains(point)) return Command::ToggleDock;
+    if (layout.help.contains(point)) return Command::ToggleHelp;
+    if (!layout.compact)
+    {
+        for (std::size_t i = 0; i < brushes.size(); ++i)
+            if (layout.brushCards[i].contains(point)) return brushes[i].command;
+        for (std::size_t i = 0; i < actions.size(); ++i)
+            if (layout.actionCards[i].contains(point)) return actions[i].command;
+    }
     return Command::Panel;
 }
 
@@ -183,11 +191,27 @@ void box(sf::RenderTarget& target, const Rect& area, sf::Color fill,
 
 // Anchor text by its ink bounds so short labels and keycaps align with their icons.
 void label(sf::RenderTarget& target, const sf::Font& font, const std::string& value, unsigned int size,
-           sf::Vector2f position, sf::Color color, bool centered = false, bool bold = false)
+           sf::Vector2f position, sf::Color color, bool centered = false, bool bold = false, float maxWidth = 0.f)
 {
-    sf::Text text(font, value, size);
+    const sf::String full = sf::String::fromUtf8(value.begin(), value.end());
+    sf::Text text(font, full, size);
     if (bold)
         text.setStyle(sf::Text::Bold);
+    if (maxWidth > 0.f && text.getLocalBounds().size.x > maxWidth)
+    {
+        const sf::String ellipsis = "...";
+        text.setString(ellipsis);
+        if (text.getLocalBounds().size.x > maxWidth) return;
+        std::size_t low = 0, high = full.getSize();
+        while (low < high)
+        {
+            const auto middle = (low + high + 1) / 2;
+            text.setString(full.substring(0, middle) + ellipsis);
+            if (text.getLocalBounds().size.x <= maxWidth) low = middle;
+            else high = middle - 1;
+        }
+        text.setString(full.substring(0, low) + ellipsis);
+    }
     text.setFillColor(color);
     const Rect bounds = text.getLocalBounds();
     position -= bounds.position;
@@ -197,19 +221,29 @@ void label(sf::RenderTarget& target, const sf::Font& font, const std::string& va
     target.draw(text);
 }
 
-void brushIcon(sf::RenderTarget& target, const IsometricArt& art, Brush brush, sf::Vector2f center)
+void brushIcon(sf::RenderTarget& target, const IsometricArt& art, Brush brush, sf::Vector2f center, float scale)
 {
-    // The ground frame includes its side faces. Objects are smaller and get a 2x preview.
-    const auto groundFront = center + sf::Vector2f{0.f, 3.f};
-    const auto objectFront = center + sf::Vector2f{0.f, 19.f};
-    switch (brush)
+    TerrainType terrain = TerrainType::Grass;
+    if (brush == Brush::Dirt) terrain = TerrainType::Dirt;
+    else if (brush == Brush::Water) terrain = TerrainType::Water;
+    const sf::Vector2f front = center + sf::Vector2f{0.f,4.f*scale};
+    drawIsometricGround(target, art, terrain, front, scale);
+    if (brush == Brush::Rock)
+        drawIsometricObject(target, art, TileObject::Rock, front, scale);
+    else if (brush == Brush::Flower)
+        drawIsometricObject(target, art, TileObject::Flower, front, scale);
+}
+
+Command toolCommand(TerrainTool tool)
+{
+    switch (tool)
     {
-        case Brush::Grass: drawIsometricGround(target, art, TerrainType::Grass, groundFront, 1.f); break;
-        case Brush::Dirt:  drawIsometricGround(target, art, TerrainType::Dirt, groundFront, 1.f); break;
-        case Brush::Water: drawIsometricGround(target, art, TerrainType::Water, groundFront, 1.f); break;
-        case Brush::Rock:  drawIsometricObject(target, art, TileObject::Rock, objectFront, 2.f); break;
-        case Brush::Flower: drawIsometricObject(target, art, TileObject::Flower, objectFront, 2.f); break;
+        case TerrainTool::Paint: return Command::Paint;
+        case TerrainTool::Stack: return Command::Stack;
+        case TerrainTool::Lower: return Command::Lower;
+        case TerrainTool::Erase: return Command::Erase;
     }
+    return Command::Paint;
 }
 
 const char* actionName(Command command, bool grid)
@@ -234,9 +268,15 @@ const char* actionHint(Command command, TerrainTool tool, bool grid, bool canUnd
 {
     switch (command)
     {
+        case Command::Grass: return "Paint grass on the exposed surface";
+        case Command::Dirt: return "Paint dirt on the exposed surface";
+        case Command::Water: return "Paint water on the exposed surface";
+        case Command::Rock: return "Place a rock on the exposed surface";
+        case Command::Flower: return "Place flowers on the exposed surface";
+        case Command::ToggleHelp: return "Show the editor shortcuts";
         case Command::Paint: return "Drag to paint terrain or click to place an object";
-        case Command::Stack: return "Add one block of the selected terrain";
-        case Command::Lower: return "Remove the top block and keep the base";
+        case Command::Stack: return "Raise a cell or Shift+drag a rectangle";
+        case Command::Lower: return "Lower a cell or Shift+drag a rectangle";
         case Command::Erase: return "Erase the top block, including the base";
         case Command::Save: return "Save the map to disk";
         case Command::Load: return "Load the last saved map";
@@ -250,15 +290,115 @@ const char* actionHint(Command command, TerrainTool tool, bool grid, bool canUnd
     {
         case TerrainTool::Stack: return "Left raises terrain   /   Right clears an object";
         case TerrainTool::Lower: return "Left removes a block   /   Right clears an object";
-        case TerrainTool::Paint: return "Drag terrain   /   Click objects   /   Right clears";
+        case TerrainTool::Paint: return "Drag to paint   /   Ctrl+drag to copy   /   Right-click clears";
         case TerrainTool::Erase: return "Erase the top block, including the base";
     }
     return "";
 }
+
+struct DockHint
+{
+    std::string title;
+    std::string detail;
+    std::string extra;
+    sf::Color color = textColor;
+};
+
+DockHint contextHint(Command hovered, TerrainTool tool, bool gridVisible, bool canUndo, bool canRedo,
+                     bool terrainPaint, std::optional<sf::IntRect> area, ClipboardHint clipboard,
+                     const std::string& feedback, bool narrow, bool compact)
+{
+    if (area)
+    {
+        const char* verb = actionName(toolCommand(tool), gridVisible);
+        const char* release = "Release to paint";
+        if (clipboard == ClipboardHint::Selecting) { verb = "Copy"; release = "Release to copy"; }
+        else if (tool == TerrainTool::Stack) release = "Release to raise";
+        else if (tool == TerrainTool::Lower) release = "Release to lower";
+        std::string title = std::string(verb) + "   " + std::to_string(area->size.x) + " x " +
+                            std::to_string(area->size.y) + " cells";
+        if (clipboard != ClipboardHint::Selecting && (tool == TerrainTool::Stack || tool == TerrainTool::Lower))
+            title += "   /   Dash = skipped";
+        return {title, std::string(release) + "   /   Esc to cancel", {}, amber};
+    }
+    if (clipboard == ClipboardHint::OutsideGrid)
+        return {"Move the whole patch inside the grid", "Ctrl+C copy cell   /   Ctrl+drag copy area", {}, amber};
+    if (!feedback.empty()) return {feedback, {}, {}, amber};
+    if (clipboard == ClipboardHint::Empty || clipboard == ClipboardHint::Ready)
+        return {clipboard == ClipboardHint::Ready ? "Ctrl+V pastes the preview here" : "Copy terrain and objects",
+                "Ctrl+C copy cell   /   Ctrl+drag copy area", {}, cyan};
+    if (hovered == Command::ToggleDock)
+        return {compact ? "Expand to show brushes and tools" : "Use the compact dock to see more map", {}, {}};
+    if (hovered == Command::Erase || (tool == TerrainTool::Erase && (hovered == Command::Canvas || hovered == Command::Panel)))
+    {
+        if (narrow)
+            return {"Click or drag to erase one block per cell", "Includes the base. Ctrl+Z undoes the stroke.",
+                    "Right-click clears only the object"};
+        return {"Drag to erase one block per cell, including its base",
+                "Ctrl+Z undoes the stroke   /   Right-click clears the object", {}};
+    }
+
+    DockHint hint{actionHint(hovered, tool, gridVisible, canUndo, canRedo), {}, {}};
+    const bool onSurface = hovered == Command::Canvas || hovered == Command::Panel;
+    if (tool == TerrainTool::Paint && (onSurface || hovered == Command::Paint))
+    {
+        if (!terrainPaint)
+            hint.title = "Click to place   /   Right-click clears";
+        else if (narrow)
+            hint.title = "Drag to paint   /   Ctrl+drag to copy";
+        hint.detail = "I pick   /   Shift+I pick ground";
+        if (terrainPaint)
+        {
+            if (narrow) hint.extra = hint.detail;
+            hint.detail = narrow ? "F fill   /   Shift+drag rectangle" :
+                "F fill   /   Shift+drag rectangle   /   I pick   /   Shift+I ground";
+        }
+    }
+    else if (onSurface && (tool == TerrainTool::Stack || tool == TerrainTool::Lower))
+    {
+        if (narrow)
+            hint.title = tool == TerrainTool::Stack ? "Click to raise   /   Right-click clears" : "Click to lower   /   Right-click clears";
+        hint.detail = tool == TerrainTool::Stack ? "Shift+drag to raise a rectangle" : "Shift+drag to lower a rectangle";
+    }
+    return hint;
 }
 
+// The shortcut chip stays visible even on the active tool. Narrow buttons stack their two labels.
+void drawButton(sf::RenderTarget& target, const sf::Font& font, Rect card, const std::string& name,
+                const char* shortcut, bool active, bool hot, bool pressed, bool disabled,
+                bool header = false, bool shortHeader = false)
+{
+    sf::Color fill = header ? headerColor : cardColor;
+    if (disabled) fill = railColor;
+    else if (hot) fill = pressed ? pressedColor : hoverColor;
+    if (active) fill = selectedFill;
+    const sf::Color ink = disabled ? disabledText : active ? cyan : textColor;
+    box(target, card, fill, active ? cyan : (hot && !disabled ? quietColor : borderColor));
+    if (shortHeader)
+    {
+        label(target, font, name, 13, card.getCenter(), ink, true, true);
+        return;
+    }
+    if (card.size.y > 30.f)
+    {
+        const float center = card.getCenter().x;
+        label(target, font, name, 14, {center,card.position.y+10.f}, ink, true, active);
+        label(target, font, shortcut, 11, {center,card.position.y+24.f}, disabled ? disabledText : quietColor, true);
+        return;
+    }
+    const float keyWidth = std::string_view(shortcut).size() > 3 ? 39.f : 22.f;
+    const float middle = card.getCenter().y;
+    const Rect cap{{card.position.x+card.size.x-keyWidth-4.f,middle-7.f},{keyWidth,14.f}};
+    label(target, font, name, header ? 13 : 14, {card.position.x+6.f,middle}, ink, false, active,
+          cap.position.x-card.position.x-9.f);
+    box(target, cap, railColor);
+    label(target, font, shortcut, 11, cap.getCenter(), disabled ? disabledText : quietColor, true);
+}
+}
 EditorCommand editorCommandForKey(sf::Keyboard::Key key)
 {
+    if (key == Key::F1) return Command::ToggleHelp;
+    if (key == Key::F6) return Command::ToggleDock;
     if (key == Key::Unknown)
         return Command::Canvas;
     for (const auto& button : brushes)
@@ -286,7 +426,7 @@ EditorUI::EditorUI(const sf::Font* font) : font(font) {}
 
 EditorCommand EditorUI::hitTest(sf::Vector2u windowSize, sf::Vector2i pixel) const
 {
-    return font ? commandAt(makeLayout(windowSize), pixel) : Command::Canvas;
+    return font ? commandAt(makeLayout(windowSize, compact), pixel) : Command::Canvas;
 }
 
 void EditorUI::notify(const std::string& message)
@@ -297,150 +437,116 @@ void EditorUI::notify(const std::string& message)
 
 void EditorUI::draw(sf::RenderTarget& target, const IsometricArt& art, Brush brush, TerrainTool tool,
                     bool gridVisible, sf::Vector2i mousePixel, bool leftDown, std::string_view activeAssetLabel,
-                    bool canUndo, bool canRedo, std::optional<sf::IntRect> paintArea, bool groundStamp) const
+                    bool canUndo, bool canRedo, std::optional<sf::IntRect> editArea, bool groundStamp,
+                    ClipboardHint clipboard) const
 {
-    const Layout layout = makeLayout(target.getSize());
-    if (!font || layout.scale <= 0.f)
-        return;
+    const Layout layout = makeLayout(target.getSize(), compact);
+    if (!font || layout.scale <= 0.f) return;
     const auto hovered = commandAt(layout, mousePixel);
-    const sf::View oldView = target.getView();
-    target.setView(sf::View(Rect{{0.f, 0.f}, sf::Vector2f(target.getSize()) / layout.scale}));
+    const auto currentTool = toolCommand(tool);
+    const auto& material = brushes[static_cast<std::size_t>(brush)];
+    const bool usesBrush = tool == TerrainTool::Paint || tool == TerrainTool::Stack;
+    const auto oldView = target.getView();
+    target.setView(sf::View(Rect{{0.f,0.f},sf::Vector2f(target.getSize())/layout.scale}));
 
     box(target, layout.panel, panelColor, panelLine);
-    const float headingY = layout.panel.position.y + (layout.stacked ? 13.f : 18.f);
-    label(target, *font, "TERRAIN", 11, {layout.brushCards[0].position.x, headingY}, quietColor, false, true);
-    label(target, *font, "OBJECTS", 11, {layout.brushCards[3].position.x, headingY}, quietColor, false, true);
-    const float labelX = layout.brushCards[0].position.x;
+    box(target, {{layout.panel.position.x+1.f,layout.footerY},
+                 {layout.panel.size.x-2.f, layout.panel.position.y+layout.panel.size.y-layout.footerY-1.f}}, railColor);
+    box(target, layout.header, headerColor, panelLine);
+
+    const float textX = layout.panel.position.x + layout.padding;
+    const float middleY = layout.header.getCenter().y;
+    sf::ConvexShape layer(4);
+    layer.setPoint(0,{0.f,5.f}); layer.setPoint(1,{10.f,0.f});
+    layer.setPoint(2,{20.f,5.f}); layer.setPoint(3,{10.f,10.f});
+    layer.setPosition({textX,middleY-2.f});
+    layer.setFillColor({63,133,129}); target.draw(layer);
+    layer.move({0.f,-5.f}); layer.setFillColor(cyan); target.draw(layer);
+
+    std::string selection = actionName(currentTool, gridVisible);
+    if (usesBrush)
+        selection += "  /  " + (activeAssetLabel.empty() ? std::string(material.name) : std::string(activeAssetLabel));
+    const float nameX = textX + 28.f;
+    if (layout.narrow)
+    {
+        label(target, *font, "MAP EDITOR", 10, {nameX,middleY-9.f}, quietColor, false, true);
+        label(target, *font, selection, 15, {nameX,middleY+7.f}, cyan, false, true, layout.help.position.x-nameX-5.f);
+    }
+    else
+    {
+        label(target, *font, "Map editor", 18, {nameX,middleY}, textColor, false, true);
+        const float dividerX = nameX + 94.f;
+        box(target, {{dividerX,middleY-8.f},{1.f,16.f}}, panelLine);
+        label(target, *font, selection, 15, {dividerX+12.f,middleY}, cyan, false, true,
+              layout.help.position.x-dividerX-18.f);
+    }
+    drawButton(target, *font, layout.help, "Shortcuts", "F1", false, hovered == Command::ToggleHelp,
+               leftDown, false, true, layout.narrow);
+    drawButton(target, *font, layout.toggle, compact ? "Expand" : "Compact", "F6", false,
+               hovered == Command::ToggleDock, leftDown, false, true, layout.narrow);
+
+    const bool terrainPaint = activeAssetLabel.empty() ? brush != Brush::Rock && brush != Brush::Flower : groundStamp;
+    const auto hint = contextHint(hovered, tool, gridVisible, canUndo, canRedo, terrainPaint, editArea, clipboard,
+                                  feedbackClock.getElapsedTime().asSeconds() < 3.f ? feedback : "",
+                                  layout.narrow, compact);
+    if (compact)
+    {
+        std::string status = hint.title;
+        if (editArea) status += "   /   Esc cancels";
+        label(target, *font, status, 13, {textX,layout.footerY+12.f}, hint.color, false, false,
+              layout.panel.size.x-2.f*layout.padding);
+        target.setView(oldView);
+        return;
+    }
+
+    const float headingY = layout.brushCards[0].position.y - 10.f;
+    label(target, *font, "TERRAIN", 11, {layout.brushCards[0].position.x,headingY}, quietColor, false, true);
+    label(target, *font, "OBJECTS", 11, {layout.brushCards[3].position.x,headingY}, quietColor, false, true);
     const auto groupHeading = [&](const char* name, const Rect& first) {
-        const sf::Vector2f pos = layout.stacked ? sf::Vector2f{labelX, first.position.y + first.size.y / 2.f}
-                                                : sf::Vector2f{first.position.x, headingY};
+        const auto pos = layout.stacked ? sf::Vector2f{textX,first.getCenter().y} : sf::Vector2f{first.position.x,headingY};
         label(target, *font, name, 11, pos, quietColor, false, true);
     };
-    groupHeading("TOOL", layout.actionCards[0]);
-    groupHeading("MAP", layout.actionCards[4]);
-    if (layout.stacked)
-        groupHeading("EDIT", layout.actionCards[firstHistoryButton]);
+    groupHeading("TOOLS",layout.actionCards[0]);
+    groupHeading("MAP",layout.actionCards[4]);
+    if (layout.stacked) groupHeading("EDIT",layout.actionCards[firstHistoryButton]);
 
     for (std::size_t i = 0; i < brushes.size(); ++i)
     {
-        const BrushButton& button = brushes[i];
+        const auto& button = brushes[i];
         const Rect card = layout.brushCards[i];
-        const bool selected = tool != TerrainTool::Erase && activeAssetLabel.empty() && brush == button.brush;
+        const bool selected = usesBrush && activeAssetLabel.empty() && brush == button.brush;
         const bool hot = hovered == button.command;
         sf::Color fill = selected ? selectedFill : cardColor;
-        if (hot && !selected) fill = leftDown ? pressedColor : hoverColor;
-        box(target, card, fill, selected ? accent : (hot ? quietColor : borderColor));
-        if (selected)
-            box(target, {card.position, {card.size.x, 2.f}}, accent);
-
-        const float center = card.position.x + std::floor(card.size.x / 2.f);
-        const float iconY = card.position.y + (layout.stacked ? 19.f : 43.f);
-        brushIcon(target, art, button.brush, {center + 6.f, iconY});
-        label(target, *font, button.shortcut, 12, card.position + sf::Vector2f{6.f, 11.f},
-              selected ? accent : quietColor, false, true);
-        label(target, *font, button.name, 15, {center, card.position.y + card.size.y - (layout.stacked ? 11.f : 16.f)},
-              selected ? accent : textColor, true, selected);
+        if (hot) fill = leftDown ? pressedColor : hoverColor;
+        box(target, card, fill, selected ? cyan : hot ? quietColor : borderColor);
+        const float captionHeight = layout.stacked ? 17.f : 21.f;
+        const float captionY = card.position.y + card.size.y - captionHeight - 1.f;
+        box(target, {{card.position.x+1.f,captionY},{card.size.x-2.f,captionHeight}},
+            selected ? sf::Color{42,73,75} : railColor);
+        const float iconScale = layout.stacked ? 1.f : card.size.x >= 75.f ? 2.f : 1.5f;
+        brushIcon(target, art, button.brush, {card.getCenter().x,(card.position.y+captionY)/2.f+1.f},iconScale);
+        const Rect keycap{card.position+sf::Vector2f{3.f,3.f},{13.f,13.f}};
+        box(target,keycap,selected ? cyan : railColor);
+        label(target,*font,button.shortcut,10,keycap.getCenter(),selected ? railColor : quietColor,true,true);
+        label(target,*font,button.name,layout.stacked ? 13 : 15,{card.getCenter().x,captionY+captionHeight/2.f},
+              selected ? cyan : textColor,true,selected);
     }
-
     for (std::size_t i = 0; i < actions.size(); ++i)
     {
-        const ActionButton& button = actions[i];
-        const Rect card = layout.actionCards[i];
+        const auto& button = actions[i];
         const bool disabled = (button.command == Command::Undo && !canUndo) ||
                               (button.command == Command::Redo && !canRedo);
-        const bool hot = !disabled && hovered == button.command;
-        const bool active = (button.command == Command::Paint && tool == TerrainTool::Paint) ||
-                            (button.command == Command::Stack && tool == TerrainTool::Stack) ||
-                            (button.command == Command::Lower && tool == TerrainTool::Lower) ||
-                            (button.command == Command::Erase && tool == TerrainTool::Erase);
-        const auto fill = disabled ? panelColor : active ? accent : (hot ? (leftDown ? pressedColor : hoverColor) : cardColor);
-        box(target, card, fill, active ? accent : (hot ? quietColor : borderColor));
-        const std::string name = actionName(button.command, gridVisible);
-        const float middleY = card.position.y + std::floor(card.size.y / 2.f);
-        if (card.size.y > 30.f)
-        {
-            const float center = card.position.x + card.size.x / 2.f;
-            label(target, *font, name, 14, {center, card.position.y + 10.f}, active ? panelColor : textColor, true, active);
-            label(target, *font, button.shortcut, 11, {center, card.position.y + 25.f}, active ? panelColor : quietColor, true);
-            continue;
-        }
-        label(target, *font, name, card.size.x < 90.f ? 14 : 15, {card.position.x + 6.f, middleY},
-              disabled ? disabledText : active ? panelColor : textColor, false, active);
-        const float keyWidth = i >= firstHistoryButton ? 40.f : 22.f;
-        const Rect keycap{{card.position.x + card.size.x - keyWidth - 5.f, middleY - 9.f}, {keyWidth, 18.f}};
-        box(target, keycap, panelColor, borderColor);
-        label(target, *font, button.shortcut, 11, {keycap.position.x + keyWidth / 2.f, middleY},
-              disabled ? disabledText : quietColor, true);
+        drawButton(target,*font,layout.actionCards[i],actionName(button.command, gridVisible),button.shortcut,
+                   currentTool == button.command,hovered == button.command && !disabled,leftDown,disabled);
     }
-
-    const float padding = layout.brushCards[0].position.x - layout.panel.position.x;
-    const float textX = layout.panel.position.x + padding;
-    box(target, {{textX, layout.footerY}, {layout.panel.size.x - 2.f * padding, 1.f}}, borderColor);
-    const float availableWidth = layout.stacked ? layout.panel.size.x - 2.f * padding :
-        layout.actionCards[firstHistoryButton].position.x - textX - 6.f;
-    if (paintArea)
-    {
-        const auto size = paintArea->size;
-        label(target, *font, std::to_string(size.x) + " x " + std::to_string(size.y) + " cells", 14,
-              {textX, layout.footerY + 10.f}, accent, false, true);
-        label(target, *font, "Release to paint   /   Esc to cancel", 13, {textX, layout.footerY + 26.f}, textColor);
-        target.setView(oldView);
-        return;
-    }
-    const bool showingFeedback = !feedback.empty() && feedbackClock.getElapsedTime().asSeconds() < 3.f;
-    std::string footer = showingFeedback ? feedback : actionHint(hovered, tool, gridVisible, canUndo, canRedo);
-    const bool eraseHint = !showingFeedback && (hovered == Command::Erase ||
-        (tool == TerrainTool::Erase && (hovered == Command::Canvas || hovered == Command::Panel)));
-    if (eraseHint)
-    {
-        // Fit the full instruction even when the dock is only 320 logical pixels wide.
-        const bool narrow = layout.panel.size.x < 435.f;
-        if (narrow)
-        {
-            label(target, *font, "Click or drag to erase one block per cell.", 12, {textX,layout.footerY+9.f}, quietColor);
-            label(target, *font, "Includes the base. Ctrl+Z undoes the stroke.", 12, {textX,layout.footerY+23.f}, quietColor);
-            label(target, *font, "Right-click clears only the object.", 12, {textX,layout.footerY+37.f}, quietColor);
-        }
-        else
-        {
-            label(target, *font, "Click or drag to erase one block per cell, including the base.", 13,
-                  {textX,layout.footerY+10.f}, quietColor);
-            label(target, *font, "Ctrl+Z undoes the stroke. Right-click clears only the object.", 13,
-                  {textX,layout.footerY+26.f}, quietColor);
-        }
-        target.setView(oldView);
-        return;
-    }
-    const bool overHistory = hovered == Command::Undo || hovered == Command::Redo;
-    if (!showingFeedback && !overHistory && tool != TerrainTool::Erase && !activeAssetLabel.empty())
-        footer = "Stamp   " + std::string(activeAssetLabel);
-    else if (!showingFeedback && hovered == Command::ToggleLibrary)
-        footer = "Browse the asset library";
-    sf::Text measure(*font, footer, 13);
-    if (measure.getLocalBounds().size.x > availableWidth)
-    {
-        while (!footer.empty() && measure.getLocalBounds().size.x > availableWidth)
-        {
-            footer.pop_back();
-            measure.setString(footer + "...");
-        }
-        footer += "...";
-    }
-    const bool showPickHint = !showingFeedback && tool == TerrainTool::Paint &&
-        (hovered == Command::Canvas || hovered == Command::Panel || hovered == Command::Paint);
-    const bool terrainPaint = activeAssetLabel.empty() ? brush != Brush::Rock && brush != Brush::Flower : groundStamp;
-    const float footerY = layout.footerY + (showPickHint ? 10.f : 17.f);
-    label(target, *font, footer, 13, {textX, footerY}, showingFeedback || (tool != TerrainTool::Erase && !activeAssetLabel.empty()) ? accent : quietColor);
-    if (showPickHint)
-    {
-        const bool narrow = layout.panel.size.x < 435.f;
-        const char* pickHint = "I pick   /   Shift+I pick ground";
-        std::string hint = terrainPaint ? "F fill   /   Shift+drag rectangle" : pickHint;
-        if (terrainPaint && narrow)
-            label(target, *font, pickHint, 13, {textX, layout.footerY + 40.f}, quietColor);
-        else if (terrainPaint)
-            hint += std::string("   /   ") + pickHint;
-        label(target, *font, hint, 13, {textX, layout.footerY + 26.f}, quietColor);
-    }
+    const float right = layout.stacked ? layout.panel.position.x + layout.panel.size.x - layout.padding
+                                       : layout.actionCards[firstHistoryButton].position.x - 6.f;
+    const float availableWidth = right - textX;
+    const float startY = layout.footerY + (hint.detail.empty() ? 19.f : 11.f);
+    label(target,*font,hint.title,14,{textX,startY},hint.color,false,true,availableWidth);
+    if (!hint.detail.empty())
+        label(target,*font,hint.detail,13,{textX,layout.footerY+27.f},quietColor,false,false,availableWidth);
+    if (!hint.extra.empty())
+        label(target,*font,hint.extra,12,{textX,layout.footerY+40.f},quietColor,false,false,availableWidth);
     target.setView(oldView);
 }

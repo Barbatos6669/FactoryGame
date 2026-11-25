@@ -231,6 +231,12 @@ const Tile* findTile(const std::vector<Tile>& tiles, sf::Vector2i cell)
     return nullptr;
 }
 
+bool TilePatch::fits(sf::Vector2i anchor, int gridSize) const
+{
+    return !tiles.empty() && size.x > 0 && size.y > 0 && size.x <= gridSize && size.y <= gridSize &&
+           anchor.x >= 0 && anchor.y >= 0 && anchor.x <= gridSize - size.x && anchor.y <= gridSize - size.y;
+}
+
 namespace
 {
 void paintSurface(TerrainLayer& surface, Brush brush)
@@ -340,21 +346,42 @@ std::vector<std::size_t> terrainFillCells(const std::vector<Tile>& tiles, sf::Ve
     return patch;
 }
 
-bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush brush, AssetPlacement groundStamp)
+namespace
 {
-    if (bounds.size.x <= 0 || bounds.size.y <= 0 || !validGroundPaint(brush, groundStamp))
+bool addBlock(Tile& tile, const TerrainLayer& block)
+{
+    if (tile.layers.size() >= MAX_TERRAIN_LAYERS)
         return false;
+    tile.layers.push_back(block);
+    return true;
+}
 
+bool removeUpperBlock(Tile& tile)
+{
+    if (tile.layers.size() <= 1)
+        return false;
+    tile.layers.pop_back();
+    return true;
+}
+
+template <typename EditColumn>
+std::size_t editOrCreateRectangle(std::vector<Tile>& tiles, sf::IntRect bounds,
+                                  const TerrainLayer& newBase, EditColumn editColumn)
+{
+    if (bounds.size.x <= 0 || bounds.size.y <= 0)
+        return 0;
     // Preserve existing column order and append only the missing cells, from left to right in each row.
     const auto width = static_cast<std::size_t>(bounds.size.x);
     std::vector<bool> occupied(width * bounds.size.y, false);
+    std::size_t edited = 0;
     for (Tile& tile : tiles)
     {
         if (bounds.contains(tile.cell))
         {
             const auto offset = tile.cell - bounds.position;
             occupied[offset.y * width + offset.x] = true;
-            paintGround(tile.layers.back(), brush, groundStamp);
+            if (editColumn(tile))
+                ++edited;
         }
     }
     for (int y = 0; y < bounds.size.y; ++y)
@@ -363,12 +390,49 @@ bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush b
         {
             if (!occupied[y * width + x])
             {
-                tiles.push_back({bounds.position + sf::Vector2i{x, y}});
-                paintGround(tiles.back().layers.back(), brush, groundStamp);
+                tiles.push_back({bounds.position + sf::Vector2i{x, y}, {newBase}});
+                ++edited;
             }
         }
     }
-    return true;
+    return edited;
+}
+}
+
+bool paintTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, Brush brush, AssetPlacement groundStamp)
+{
+    if (!validGroundPaint(brush, groundStamp))
+        return false;
+    TerrainLayer base;
+    paintGround(base, brush, groundStamp);
+    return editOrCreateRectangle(tiles, bounds, base, [&](Tile& tile) {
+        paintGround(tile.layers.back(), brush, groundStamp);
+        return true;
+    }) > 0;
+}
+
+std::size_t raiseTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds, TerrainType terrain,
+                                  const AssetPlacement& groundStamp)
+{
+    if (!validPlacement(groundStamp))
+        return 0;
+    const TerrainLayer block{terrain, TileObject::None, {}, groundStamp};
+    return editOrCreateRectangle(tiles, bounds, block, [&](Tile& tile) {
+        return addBlock(tile, block);
+    });
+}
+
+std::size_t lowerTerrainRectangle(std::vector<Tile>& tiles, sf::IntRect bounds)
+{
+    if (bounds.size.x <= 0 || bounds.size.y <= 0)
+        return 0;
+    std::size_t lowered = 0;
+    for (Tile& tile : tiles)
+    {
+        if (bounds.contains(tile.cell) && removeUpperBlock(tile))
+            ++lowered;
+    }
+    return lowered;
 }
 
 bool placeAsset(std::vector<Tile>& tiles, sf::Vector2i cell, const AssetPlacement& asset, bool groundSurface)
@@ -399,21 +463,13 @@ bool stackTile(std::vector<Tile>& tiles, sf::Vector2i cell, TerrainType terrain)
         tiles.push_back({cell, {block}});
         return true;
     }
-    if (tile->layers.size() >= MAX_TERRAIN_LAYERS)
-        return false;
-
-    tile->layers.push_back(block);
-    return true;
+    return addBlock(*tile, block);
 }
 
 bool lowerTile(std::vector<Tile>& tiles, sf::Vector2i cell)
 {
     Tile* tile = findMutableTile(tiles, cell);
-    if (tile == nullptr || tile->layers.size() <= 1)
-        return false;
-
-    tile->layers.pop_back();
-    return true;
+    return tile && removeUpperBlock(*tile);
 }
 
 bool eraseTile(std::vector<Tile>& tiles, sf::Vector2i cell)

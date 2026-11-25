@@ -17,6 +17,8 @@ public:
     void remember(const std::vector<Tile>& tiles, sf::Vector2i cell);
     /// Capture a known column by index before a bulk edit, once per column.
     void rememberColumn(const Tile& tile, std::size_t index);
+    /// Capture a known vacant cell before inserting its first column in a bulk edit.
+    void rememberEmpty(sf::Vector2i cell);
     /// Capture the whole footprint before a new rectangular paint action.
     void rememberRectangle(const std::vector<Tile>& tiles, sf::IntRect bounds);
     void finish(const std::vector<Tile>& tiles);

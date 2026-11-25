@@ -139,6 +139,17 @@ void applyEditorCommand(
         case EditorCommand::Redo:
             ui.notify(editor.redoEdit() ? "Redid last edit" : "Nothing to redo");
             break;
+        case EditorCommand::ToggleDock:
+            editor.finishEdit();
+            ui.toggleCompact();
+            break;
+        case EditorCommand::ToggleHelp:
+            if (debug.getFont())
+            {
+                editor.finishEdit();
+                ui.help.open();
+            }
+            break;
         case EditorCommand::ToggleLibrary:
             editor.finishEdit();
             if (debug.getFont())
@@ -206,6 +217,12 @@ bool shiftHeld()
     return sf::Keyboard::isKeyPressed(Key::LShift) || sf::Keyboard::isKeyPressed(Key::RShift);
 }
 
+bool controlHeld()
+{
+    using Key = sf::Keyboard::Key;
+    return sf::Keyboard::isKeyPressed(Key::LControl) || sf::Keyboard::isKeyPressed(Key::RControl);
+}
+
 /** @brief Handle editor input and report focus changes for the camera. */
 bool handleEvents(
     sf::RenderWindow& window,
@@ -265,6 +282,14 @@ bool handleEvents(
             editor.finishEdit();
             resizeWorldView(window, view, resized->size, editor.zoom);
         }
+        if (ui.help.isOpen())
+        {
+            // The event that closes help also belongs to the panel.
+            focusChanged = true;
+            if (window.hasFocus())
+                ui.help.handleEvent(*event, window.getSize());
+            continue;
+        }
         if (library.browser.isOpen())
         {
             editor.finishEdit();
@@ -281,6 +306,27 @@ bool handleEvents(
                 continue;
             if (key->code == sf::Keyboard::Key::Escape)
                 editor.cancelSelection();
+            else if (key->control && !key->shift && !key->alt && !key->system &&
+                     (key->code == sf::Keyboard::Key::C || key->code == sf::Keyboard::Key::V))
+            {
+                const auto cell = canvasCellAt(sf::Mouse::getPosition(window));
+                if (!cell || editor.isDragging() || editor.rectangleBounds())
+                    continue;
+                if (key->code == sf::Keyboard::Key::C)
+                    ui.notify(editor.copyArea({*cell, {1, 1}}) ? "Copied 1 cell. Ctrl+V to paste"
+                                                               : "Point at a painted cell to copy");
+                else if (editor.getClipboard().tiles.empty())
+                    ui.notify("Copy a cell or area first");
+                else if (const auto changed = editor.pasteAt(*cell, grid.size))
+                {
+                    if (*changed == 0)
+                        ui.notify("This spot already matches the copy");
+                    else
+                        ui.notify("Pasted " + std::to_string(*changed) + (*changed == 1 ? " cell" : " cells"));
+                }
+                else
+                    ui.notify("Move the whole patch inside the grid");
+            }
             else if (key->code == sf::Keyboard::Key::I && !key->control && !key->alt && !key->system)
                 sampleAtPixel(sf::Mouse::getPosition(window), key->shift);
             else if (key->code == sf::Keyboard::Key::F && !key->shift && !key->control && !key->alt && !key->system)
@@ -350,6 +396,8 @@ bool handleEvents(
             {
                 if (click->button == sf::Mouse::Button::Right)
                     editor.clearDecoration(*cell);
+                else if (controlHeld())
+                    editor.beginCopyRectangle(*cell, view);
                 else if (!shiftHeld() || !editor.beginRectangle(*cell, view, library.assets))
                     editor.pressCell(*cell, click->position, view, ui, library.assets);
                 debug.log("Clicked cell: " + std::to_string(cell->x) + ", " + std::to_string(cell->y));
@@ -441,18 +489,39 @@ void drawFrame(
 {
     window.clear();
     const auto& selectedAsset = editor.getSelectedAsset();
-    const auto paintArea = editor.rectangleBounds();
+    const auto editArea = editor.rectangleBounds();
+    const auto& patch = editor.getClipboard();
+    ClipboardHint clipboard = ClipboardHint::Hidden;
+    const TilePatch* pastePreview = nullptr;
+    if (editor.isCopyingRectangle())
+        clipboard = ClipboardHint::Selecting;
+    else if (!editArea && !editor.isDragging() && hoveredCell && window.hasFocus() &&
+             insideWindow(mousePixels, window.getSize()) && controlHeld())
+    {
+        if (patch.tiles.empty())
+            clipboard = ClipboardHint::Empty;
+        else
+        {
+            pastePreview = &patch;
+            clipboard = patch.fits(*hoveredCell, grid.size) ? ClipboardHint::Ready : ClipboardHint::OutsideGrid;
+        }
+    }
     drawIsometricMap(window, grid, editor.getTiles(), art, engineer, debug.isGridVisible(), hoveredCell,
-                     &library.assets, &selectedAsset, editor.getTool() == TerrainTool::Stack, paintArea);
+                     &library.assets, clipboard == ClipboardHint::Hidden ? &selectedAsset : nullptr,
+                     editor.getTool(), editArea, editor.isCopyingRectangle(), pastePreview);
     debug.draw(window);
     const AssetEntry* selected = selectedAsset.id.empty() ? nullptr : library.assets.index().find(selectedAsset.id);
-    ui.draw(window, art, editor.getBrush(), editor.getTool(), debug.isGridVisible(), mousePixels,
-            window.hasFocus() && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left),
+    const bool dockActive = window.hasFocus() && !ui.help.isOpen() && !library.browser.isOpen();
+    ui.draw(window, art, editor.getBrush(), editor.getTool(), debug.isGridVisible(),
+            dockActive ? mousePixels : sf::Vector2i{-1, -1},
+            dockActive && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left),
             selected ? selected->name : std::string_view{}, editor.canUndo(), editor.canRedo(),
-            paintArea, selected && selected->groundSurface);
+            editArea, selected && selected->groundSurface, clipboard);
     if (library.browser.isOpen())
         library.browser.draw(window, library.assets.index(), library.assets.art, selectedAsset,
                              library.assets.indexing());
+    if (ui.help.isOpen() && debug.getFont())
+        ui.help.draw(window, *debug.getFont(), mousePixels);
     window.display();
 }
 
@@ -478,7 +547,7 @@ void runGame(
     resizeWorldView(window, view, window.getSize(), editor.zoom);
     sf::Clock frameClock;
     if (!debug.getFont())
-        window.setTitle("Beltbound | 1-5 Brushes | P Paint  Shift+drag Rectangle  I Pick | B Raise  L Lower  E Erase | Ctrl+Z Undo  Ctrl+Y Redo | F2 Save  F4 Load  F3 Grid");
+        window.setTitle("Beltbound | 1-5 Brushes | P Paint  B Raise  L Lower (Shift+drag area) | Ctrl+drag Copy  Ctrl+V Paste | F Fill  I Pick  E Erase | Ctrl+Z Undo  Ctrl+Y Redo | F2 Save  F4 Load  F3 Grid");
 
     while (window.isOpen())
     {
@@ -494,12 +563,13 @@ void runGame(
             break;
         }
 
-        updateWorld(window, view, grid, engineer, deltaSeconds, focusChanged || library.browser.isOpen(),
+        const bool panelOpen = library.browser.isOpen() || ui.help.isOpen();
+        updateWorld(window, view, grid, engineer, deltaSeconds, focusChanged || panelOpen,
                     editor.getTiles(), followEngineer);
         editor.finishIfCameraMoved(view);
         const auto mousePixels = sf::Mouse::getPosition(window);
         const auto projectedPoint = projectedMousePoint(window, mousePixels);
-        const bool overUI = library.browser.isOpen() || editorHit(ui, debug, window.getSize(), mousePixels) != EditorCommand::Canvas;
+        const bool overUI = panelOpen || editorHit(ui, debug, window.getSize(), mousePixels) != EditorCommand::Canvas;
         const auto hoveredCell = overUI ? std::nullopt : pickTerrainCell(grid, editor.getTiles(), projectedPoint, art,
                                                                         &library.assets);
         debug.update(deltaSeconds, mousePixels, viewToMap(projectedPoint), grid, hoveredCell, overUI);

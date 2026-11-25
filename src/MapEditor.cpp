@@ -5,6 +5,7 @@
 #include "Grid.hpp"
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <utility>
 
 namespace
@@ -12,6 +13,13 @@ namespace
 bool isTerrainBrush(Brush brush)
 {
     return brush == Brush::Grass || brush == Brush::Dirt || brush == Brush::Water;
+}
+
+TerrainType brushTerrain(Brush brush)
+{
+    if (brush == Brush::Dirt) return TerrainType::Dirt;
+    if (brush == Brush::Water) return TerrainType::Water;
+    return TerrainType::Grass;
 }
 }
 
@@ -132,9 +140,74 @@ std::size_t MapEditor::fillSurface(sf::Vector2i cell, const AssetLibrary& librar
     return patch.size();
 }
 
+bool MapEditor::canEditRectangle(const AssetLibrary& library) const
+{
+    return tool == TerrainTool::Lower || tool == TerrainTool::Stack || paintsSurface(library);
+}
+
+bool MapEditor::copyArea(sf::IntRect bounds)
+{
+    if (bounds.size.x <= 0 || bounds.size.y <= 0)
+        return false;
+    TilePatch selection{bounds.size, {}};
+    for (const Tile& tile : tiles)
+    {
+        if (bounds.contains(tile.cell))
+            selection.tiles.push_back({tile.cell - bounds.position, tile.layers});
+    }
+    if (selection.tiles.empty())
+        return false;
+    clipboard = std::move(selection);
+    return true;
+}
+
+std::optional<std::size_t> MapEditor::pasteAt(sf::Vector2i anchor, int gridSize)
+{
+    if (!clipboard.fits(anchor, gridSize))
+        return std::nullopt;
+    finishEdit();
+    const sf::IntRect bounds{anchor, clipboard.size};
+    std::map<std::pair<int, int>, std::size_t> destinations;
+    for (std::size_t i = 0; i < tiles.size(); ++i)
+    {
+        const auto cell = tiles[i].cell;
+        if (bounds.contains(cell))
+            destinations.emplace(std::make_pair(cell.x, cell.y), i);
+    }
+
+    std::size_t changed = 0;
+    for (const Tile& source : clipboard.tiles)
+    {
+        const auto cell = anchor + source.cell;
+        const auto found = destinations.find({cell.x, cell.y});
+        if (found == destinations.end())
+        {
+            history.rememberEmpty(cell);
+            tiles.push_back({cell, source.layers});
+        }
+        else
+        {
+            Tile& target = tiles[found->second];
+            if (target.layers == source.layers)
+                continue;
+            history.rememberColumn(target, found->second);
+            target.layers = source.layers;
+        }
+        ++changed;
+    }
+    history.finish(tiles);
+    return changed;
+}
+
+void MapEditor::beginCopyRectangle(sf::Vector2i cell, const sf::View& view)
+{
+    finishEdit();
+    rectangle = RectanglePreview{cell, cell, view.getCenter(), view.getSize(), true};
+}
+
 bool MapEditor::beginRectangle(sf::Vector2i cell, const sf::View& view, const AssetLibrary& library)
 {
-    if (!paintsSurface(library))
+    if (!canEditRectangle(library))
         return false;
     finishEdit();
     rectangle = RectanglePreview{cell, cell, view.getCenter(), view.getSize()};
@@ -160,17 +233,40 @@ std::optional<sf::IntRect> MapEditor::rectangleBounds() const
 void MapEditor::commitRectangle(EditorUI& ui, AssetLibrary& library)
 {
     const auto bounds = rectangleBounds();
+    const bool copying = isCopyingRectangle();
     rectangle.reset();
-    if (!bounds || !paintsSurface(library))
+    if (!bounds)
+        return;
+    if (copying)
+    {
+        if (copyArea(*bounds))
+            ui.notify("Copied " + std::to_string(bounds->size.x) + " x " + std::to_string(bounds->size.y) +
+                      " patch. Ctrl+V to paste");
+        else
+            ui.notify("No painted cells to copy");
+        return;
+    }
+    if (!canEditRectangle(library))
         return;
 
     history.rememberRectangle(tiles, *bounds);
-    const bool painted = paintTerrainRectangle(tiles, *bounds, brush, selectedAsset);
-    history.finish(tiles);
-    if (painted)
-        ui.notify("Painted " + std::to_string(bounds->size.x) + " x " + std::to_string(bounds->size.y));
+    if (tool == TerrainTool::Paint)
+    {
+        if (paintTerrainRectangle(tiles, *bounds, brush, selectedAsset))
+            ui.notify("Painted " + std::to_string(bounds->size.x) + " x " + std::to_string(bounds->size.y));
+        else
+            ui.notify("Could not paint this terrain stamp");
+    }
     else
-        ui.notify("Could not paint this terrain stamp");
+    {
+        const bool raising = tool == TerrainTool::Stack;
+        const std::size_t changed = raising ? raiseTerrainRectangle(tiles, *bounds, brushTerrain(brush), selectedAsset)
+                                            : lowerTerrainRectangle(tiles, *bounds);
+        const auto area = static_cast<std::size_t>(bounds->size.x) * bounds->size.y;
+        ui.notify(std::string(raising ? "Raised " : "Lowered ") + std::to_string(changed) + " of " +
+                  std::to_string(area) + (area == 1 ? " cell" : " cells"));
+    }
+    history.finish(tiles);
 }
 
 MapEditor::TerrainStroke::TerrainStroke(sf::Vector2i start, sf::Vector2i cell, const sf::View& view)
@@ -249,16 +345,11 @@ void MapEditor::editCell(sf::Vector2i cell, EditorUI& ui, AssetLibrary& library)
             paintTile(tiles, cell, brush);
             break;
         case TerrainTool::Stack:
-        {
-            TerrainType ground = TerrainType::Grass;
-            if (brush == Brush::Dirt) ground = TerrainType::Dirt;
-            if (brush == Brush::Water) ground = TerrainType::Water;
-            if (!stackTile(tiles, cell, ground))
+            if (!stackTile(tiles, cell, brushTerrain(brush)))
                 ui.notify("Height limit: " + std::to_string(MAX_TERRAIN_LAYERS) + " blocks");
             else if (!selectedAsset.id.empty())
                 placeAsset(tiles, cell, selectedAsset, true);
             break;
-        }
         case TerrainTool::Lower:
             if (!lowerTile(tiles, cell))
                 ui.notify("No upper block to remove");

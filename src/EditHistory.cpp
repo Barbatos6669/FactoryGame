@@ -15,15 +15,6 @@ std::uint64_t cellKey(sf::Vector2i cell)
     return (x << 32) | y;
 }
 
-bool sameTile(const Tile& a, const Tile& b)
-{
-    return std::equal(a.layers.begin(), a.layers.end(), b.layers.begin(), b.layers.end(),
-        [](const TerrainLayer& left, const TerrainLayer& right) {
-            return left.terrain == right.terrain && left.object == right.object &&
-                   left.groundAsset == right.groundAsset && left.asset == right.asset;
-        });
-}
-
 std::size_t layerBytes(const Tile& tile)
 {
     std::size_t bytes = tile.layers.capacity() * sizeof(TerrainLayer);
@@ -59,6 +50,11 @@ void EditHistory::remember(const std::vector<Tile>& tiles, sf::Vector2i cell)
 void EditHistory::rememberColumn(const Tile& tile, std::size_t index)
 {
     pending[cellKey(tile.cell)] = IndexedTile{index, tile};
+}
+
+void EditHistory::rememberEmpty(sf::Vector2i cell)
+{
+    pending.try_emplace(cellKey(cell));
 }
 
 void EditHistory::rememberRectangle(const std::vector<Tile>& tiles, sf::IntRect bounds)
@@ -102,7 +98,7 @@ void EditHistory::finish(const std::vector<Tile>& tiles)
             continue;
 
         auto& before = found->second;
-        if (!before || before->index != index || !sameTile(before->tile, tile))
+        if (!before || before->index != index || before->tile.layers != tile.layers)
         {
             edit.after.push_back({index, tile});
             if (before)
